@@ -25,7 +25,7 @@ Wraps every network call with a `RateLimiter` + `tenacity` retries, normalizes
 akshare's Chinese-named columns into validated `Bar`s, and handles A-share quirks
 (volume in 手/lots → shares; trading-date → UTC). Malformed rows are skipped.
 
-:::warning eastmoney throttling
+:::warning[eastmoney throttling]
 akshare scrapes per-IP-throttled sites. Keep `RateLimiter(min_interval)` ≥ 1–2s.
 The historical-kline endpoint is also blocked from non-mainland / datacenter IPs.
 :::

@@ -23,7 +23,7 @@ class DataSource(ABC):
 用 `RateLimiter` + `tenacity` 重试包裹每次网络调用，将 akshare 的中文列名规范化为校验过的
 `Bar`，并处理 A 股特性（成交量从“手”换算为股；交易日 → UTC）。畸形行会被跳过。
 
-:::warning 东方财富限流
+:::warning[东方财富限流]
 akshare 抓取的站点按 IP 限流。生产环境保持 `RateLimiter(min_interval)` ≥ 1–2 秒。历史
 K 线接口还会屏蔽非大陆 / 数据中心 IP。
 :::
