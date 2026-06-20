@@ -1,0 +1,44 @@
+---
+slug: /
+sidebar_position: 1
+title: 概览
+---
+
+import BrowserOnly from '@docusaurus/BrowserOnly';
+
+# super-trade
+
+`super-trade` 是一个面向**中国 A 股**市场的量化交易**数据平台**，为个人/散户量化研究者
+的回测与研究而构建。
+
+它被组织成一条单向流水线，每一层都隐藏在接口之后，因此后端可替换、可测试。各层之间
+传递的是纯 Polars DataFrame，始终向下游流动：
+
+<BrowserOnly fallback={<div>正在加载架构图…</div>}>
+  {() => {
+    const ArchitectureDiagram = require('@site/src/components/ArchitectureDiagram').default;
+    return <ArchitectureDiagram />;
+  }}
+</BrowserOnly>
+
+## 分层一览
+
+| 层 | 包 | 职责 |
+|---|---|---|
+| 存储 | `super_trade.data` | `DataStore` 接口 + ClickHouse 后端；`Bar` 模型 |
+| 采集 | `super_trade.sources` | `DataSource` 接口 + akshare 与 QMT 实现 |
+| 流水线 | `super_trade.ingest` | 带缓存、幂等的日线回填 |
+| 指标 | `super_trade.metrics` | Polars 表达式指标 + 标量汇总统计 |
+| 回测 | `super_trade.backtest` | 向量化引擎、策略、A 股交易成本 |
+| 可视化 | `super_trade.viz` | 纯 Plotly 图表构建器 |
+| 仪表盘 | `dashboard/` | Streamlit 浏览器 |
+
+## 数据策略
+
+- **akshare** 提供大量免费历史数据（从东方财富/新浪抓取）。
+- **QMT**（券商终端）提供准确的近期/盘中/精确数据。
+
+两者都位于同一个 `DataSource` 接口之后，因此接入 QMT 无需改动存储、指标或回测。v1 仅
+存储 **`hfq`（后复权）日线**——它随时间稳定，适合回测。
+
+请从[快速开始](./getting-started)或[架构](./architecture)概览开始。

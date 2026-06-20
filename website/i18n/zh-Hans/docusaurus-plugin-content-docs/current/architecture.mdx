@@ -1,0 +1,53 @@
+---
+sidebar_position: 3
+title: 架构
+---
+
+import BrowserOnly from '@docusaurus/BrowserOnly';
+
+# 架构
+
+平台由一组分层构成，每层隐藏在接口之后，**纯 Polars DataFrame** 始终沿一个方向流动：
+向下游。
+
+<BrowserOnly fallback={<div>正在加载架构图…</div>}>
+  {() => {
+    const ArchitectureDiagram = require('@site/src/components/ArchitectureDiagram').default;
+    return <ArchitectureDiagram />;
+  }}
+</BrowserOnly>
+
+Python 包结构与该数据流一致：
+
+```
+src/super_trade/
+├── data/        存储 — DataStore（抽象基类）+ ClickHouseStore；Bar 模型
+├── sources/     采集 — DataSource（抽象基类）+ AkshareSource、QmtSource
+├── ingest/      流水线 — RateLimiter + DailyBackfill
+├── metrics/     指标 — Polars 表达式指标 + 标量汇总统计
+├── backtest/    回测 — Strategy、VectorizedEngine、CostModel、BacktestResult
+├── viz/         图表 — 纯 Plotly 图形构建器
+└── observability.py  configure_logfire()
+dashboard/       Streamlit 应用（仅做展示）
+```
+
+## 原则
+
+- **面向接口，而非实现。** `DataStore` 与 `DataSource` 是抽象的；具体后端（ClickHouse、
+  akshare、QMT）可替换、可测试。
+- **单向数据流。** 每层只依赖其下层，并消费纯 DataFrame——没有向上或循环依赖。
+- **复用，而非重造。** 回测用 `metrics.summary` 计算统计、用 `viz` 绘图；仪表盘只是
+  `DataStore` + `metrics` + `viz` 之上的薄壳。
+- **研究只用真实数据。** 回测从 `DataStore` 读取真实行情。合成/模拟数据**仅用于测试**，
+  位于 `tests/` 下，因此生产与回测代码无法导入它。
+
+## 为何如此设计
+
+- **ClickHouse 即缓存。** 以 `(symbol, interval, timestamp)` 为键的 `ReplacingMergeTree`
+  使重复写入幂等；回填读取 `latest_timestamp`，只抓取缺失的尾部。
+- **v1 仅存 `hfq` 日线。** 后复权价格随时间稳定（适合可复现的回测）；模式里有意暂不引入
+  `adjust` 维度。
+- **先做向量化回测。** 信号是基于指标的 Polars 表达式；盈亏在整个 DataFrame 上一次性
+  计算。事件驱动引擎是后续才加入，用于路径依赖的撮合。
+
+各组件的详细说明见[分层](./layers/data)章节。
