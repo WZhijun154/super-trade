@@ -35,6 +35,17 @@ class CostModel:
             sold * self.stamp_tax_rate
         )
 
+    def trade_cost(self, notional: float, *, is_sell: bool) -> float:
+        """Absolute cost (¥) for a single trade of the given notional.
+
+        Reuses the same rates as the vectorized model, so backtest and live
+        execution charge costs consistently. Stamp tax applies to sells only.
+        """
+        cost = notional * (self.commission_rate + self.slippage_rate)
+        if is_sell:
+            cost += notional * self.stamp_tax_rate
+        return cost
+
 
 # A zero-cost model, handy for tests and frictionless comparisons.
 NO_COSTS = CostModel(commission_rate=0.0, stamp_tax_rate=0.0, slippage_rate=0.0)
