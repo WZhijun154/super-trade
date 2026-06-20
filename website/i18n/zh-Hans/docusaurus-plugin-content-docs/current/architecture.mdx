@@ -26,6 +26,7 @@ src/super_trade/
 ├── ingest/      流水线 — RateLimiter + DailyBackfill
 ├── metrics/     指标 — Polars 表达式指标 + 标量汇总统计
 ├── backtest/    回测 — Strategy、VectorizedEngine、CostModel、BacktestResult
+├── execution/   执行 — Broker（Sim/QMT）、ExecutionEngine、RiskManager
 ├── viz/         图表 — 纯 Plotly 图形构建器
 └── observability.py  configure_logfire()
 dashboard/       Streamlit 应用（仅做展示）

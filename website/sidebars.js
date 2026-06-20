@@ -15,6 +15,7 @@ const sidebars = {
         'layers/ingest',
         'layers/metrics',
         'layers/backtest',
+        'layers/execution',
         'layers/viz',
       ],
     },

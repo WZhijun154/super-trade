@@ -18,6 +18,7 @@ const COLORS = {
   pipeline: '#14b8a6', // teal
   metrics: '#f59e0b', // amber
   backtest: '#ef4444', // red
+  execution: '#e11d48', // rose
   viz: '#a855f7', // purple
   dashboard: '#64748b', // slate
 };
@@ -51,13 +52,14 @@ function makeNode(id, x, y, title, subtitle, color) {
 }
 
 const initialNodes = [
-  makeNode('sources', 0, 130, 'Acquisition', 'sources · akshare / QMT', COLORS.acquire),
-  makeNode('ingest', 210, 130, 'Pipeline', 'ingest · DailyBackfill', COLORS.pipeline),
-  makeNode('data', 420, 130, 'Storage', 'data · ClickHouse', COLORS.store),
-  makeNode('metrics', 630, 130, 'Metrics', 'indicators + stats', COLORS.metrics),
-  makeNode('backtest', 850, 40, 'Backtest', 'engine · strategies', COLORS.backtest),
-  makeNode('viz', 850, 220, 'Visualization', 'viz · Plotly', COLORS.viz),
-  makeNode('dashboard', 1070, 130, 'Dashboard', 'Streamlit', COLORS.dashboard),
+  makeNode('sources', 0, 150, 'Acquisition', 'sources · akshare / QMT', COLORS.acquire),
+  makeNode('ingest', 210, 150, 'Pipeline', 'ingest · DailyBackfill', COLORS.pipeline),
+  makeNode('data', 420, 150, 'Storage', 'data · ClickHouse', COLORS.store),
+  makeNode('metrics', 630, 150, 'Metrics', 'indicators + stats', COLORS.metrics),
+  makeNode('backtest', 850, 10, 'Backtest', 'engine · strategies', COLORS.backtest),
+  makeNode('execution', 850, 150, 'Execution', 'live · SimBroker / QMT', COLORS.execution),
+  makeNode('viz', 850, 290, 'Visualization', 'viz · Plotly', COLORS.viz),
+  makeNode('dashboard', 1070, 150, 'Dashboard', 'Streamlit', COLORS.dashboard),
 ];
 
 function edge(id, source, target, label) {
@@ -78,9 +80,10 @@ const initialEdges = [
   edge('e2', 'ingest', 'data', 'write (idempotent)'),
   edge('e3', 'data', 'metrics', 'read bars'),
   edge('e4', 'metrics', 'backtest', 'signals + stats'),
-  edge('e5', 'metrics', 'viz', 'indicators'),
-  edge('e6', 'backtest', 'viz', 'equity / drawdown'),
-  edge('e7', 'viz', 'dashboard'),
+  edge('e5', 'metrics', 'execution', 'signals (live)'),
+  edge('e6', 'metrics', 'viz', 'indicators'),
+  edge('e7', 'backtest', 'viz', 'equity / drawdown'),
+  edge('e8', 'viz', 'dashboard'),
 ];
 
 const buttonStyle = {

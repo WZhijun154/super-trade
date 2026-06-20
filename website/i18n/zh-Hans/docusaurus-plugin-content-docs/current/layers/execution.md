@@ -1,0 +1,82 @@
+---
+title: 执行（execution）
+---
+
+# 执行 — `super_trade.execution`
+
+实盘交易层。它让策略通过**券商（broker）**运行，并带有风控；它也是回测与实盘之间的桥梁：
+**同一个** `Strategy` 既能驱动模拟券商（dry-run / 回测），也能驱动 QMT 券商（在
+**模拟账户**上实盘）。
+
+:::danger 敏感层
+该层会下单。默认 **`dry_run=True`**（只记录订单、不真正发送），且仅面向
+**QMT 模拟账户**。请保持 `RiskManager` 限额开启，只有在确认 dry-run 输出后才设为
+`dry_run=False`。
+:::
+
+## 与回测的桥梁
+
+回测与实盘共用同一条代码路径——只换 broker：
+
+```
+        Strategy.positions()  +  RiskManager（止损、上限）
+                       │   完全相同
+            ┌──────────┴───────────┐
+       SimBroker                QmtBroker
+   （dry-run / 回测）        （实盘，QMT 模拟账户）
+```
+
+`Broker` 暴露 `cash()`、`positions()`、`place_order()`。`SimBroker` 针对内存中的
+`Account`（现金 + 以真实手/股计的持仓）撮合，并复用回测的 `CostModel`，因此成本一致。
+`QmtBroker` 通过 `xtquant.xttrader` 下单。
+
+## 扫描循环
+
+`ExecutionEngine.scan_once()` 是对股票池的一次扫描：
+
+1. 逐 symbol 读取近期 bar → 计算策略目标权重与价格；
+2. 按市值标记账户；应用**单日亏损熔断**；
+3. **先处理止损平仓**（当根扫描刚止损的标的不再被重新买入）；
+4. **信号驱动的开/平仓**，由 `RiskManager` 决定仓位大小；
+5. 通过 broker 下单（dry-run 时仅记录）。
+
+```python
+from super_trade.execution import SimBroker, RiskManager, ExecutionEngine
+from super_trade.backtest import SmaCross
+
+engine = ExecutionEngine(
+    broker=SimBroker(cash=1_000_000),
+    store=store, strategy=SmaCross(10, 30), risk=RiskManager(),
+    universe=["600519", "000001"], dry_run=True,
+)
+engine.scan_once()              # 一次扫描
+engine.run(interval_seconds=10) # 每 10 秒扫描一次（阻塞；Ctrl-C 停止）
+```
+
+## 风险管理
+
+`RiskManager` / `RiskLimits` 在每次下单前强制执行：
+
+- **单标的最大权重**与**最大总敞口**（按手取整、检查现金）；
+- **单日亏损熔断**——亏损超限后停止开新仓（平仓仍允许）；
+- **止损**——某标的相对入场价跌破阈值即平仓；
+- **当日订单数上限**与手动**急停开关（kill switch）**。
+
+熔断只阻止**新买入**——止损与平仓始终放行。
+
+## 每日报告
+
+`daily_report(broker, fills, prices)` 生成 Markdown 摘要（权益、成交、成本、持仓、浮动
+盈亏）——可在收盘时由定时任务生成。
+
+## 在 QMT 模拟账户上实盘
+
+1. 在装有 **MiniQMT** 的机器上配置 `QmtBroker(account_id=..., mini_qmt_path=...)`，
+   并验证 `xttrader` 调用（已搭好骨架——必须在该机器上核对）。
+2. 先以 `dry_run=True` 运行并观察记录的订单。
+3. 再切换为 `dry_run=False` 配合 `QmtBroker` → 订单进入你的**模拟**账户。
+
+:::caution 止损无法用向量化引擎回测
+止损是路径依赖的，因此[向量化回测](./backtest)无法验证它。这里的 `SimBroker` 正是可以
+验证它的事件驱动路径的起点——在实盘信任止损之前先回测它。
+:::

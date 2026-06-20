@@ -26,6 +26,7 @@ src/super_trade/
 ├── ingest/      PIPELINE — RateLimiter + DailyBackfill
 ├── metrics/     INDICATORS — Polars-expression metrics + scalar summary stats
 ├── backtest/    BACKTEST — Strategy, VectorizedEngine, CostModel, BacktestResult
+├── execution/   EXECUTION — Broker (Sim/QMT), ExecutionEngine, RiskManager
 ├── viz/         CHARTS — pure Plotly figure builders
 └── observability.py  configure_logfire()
 dashboard/       Streamlit app (presentation only)

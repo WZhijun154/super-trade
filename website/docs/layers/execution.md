@@ -1,0 +1,85 @@
+---
+title: Execution
+---
+
+# Execution — `super_trade.execution`
+
+The live-trading layer. It runs a strategy against a **broker**, with risk
+controls, and is the bridge between backtest and live: the **same**
+`Strategy` drives a simulated broker (dry-run / backtest) or a QMT broker (live on
+a **simulation account**).
+
+:::danger Sensitive layer
+This layer can place orders. It defaults to **`dry_run=True`** (logs orders,
+sends nothing), and is intended for a **QMT 模拟账户 (simulation account)**. Keep the
+`RiskManager` limits on, and only set `dry_run=False` once you've watched the
+dry-run output.
+:::
+
+## The bridge to backtest
+
+Backtest and live share one code path — only the broker changes:
+
+```
+        Strategy.positions()  +  RiskManager (stop-loss, caps)
+                       │   identical
+            ┌──────────┴───────────┐
+       SimBroker                QmtBroker
+   (dry-run / backtest)      (live, QMT simulation account)
+```
+
+A `Broker` exposes `cash()`, `positions()`, and `place_order()`. `SimBroker` fills
+against an in-memory `Account` (cash + positions in real 手/shares), reusing the
+backtest `CostModel` so costs match. `QmtBroker` submits via `xtquant.xttrader`.
+
+## The scan loop
+
+`ExecutionEngine.scan_once()` is one sweep of the universe:
+
+1. read recent bars per symbol → evaluate the strategy's target weight + price;
+2. mark the account to market; apply the **daily-loss halt**;
+3. **stop-loss exits first** (a name just stopped out is not re-bought this scan);
+4. **signal entries/exits**, sized by the `RiskManager`;
+5. submit orders through the broker (or just log them, in dry-run).
+
+```python
+from super_trade.execution import SimBroker, RiskManager, ExecutionEngine
+from super_trade.backtest import SmaCross
+
+engine = ExecutionEngine(
+    broker=SimBroker(cash=1_000_000),
+    store=store, strategy=SmaCross(10, 30), risk=RiskManager(),
+    universe=["600519", "000001"], dry_run=True,
+)
+engine.scan_once()              # one pass
+engine.run(interval_seconds=10) # scan every 10s (blocks; Ctrl-C to stop)
+```
+
+## Risk management
+
+`RiskManager` / `RiskLimits` enforce, before every order:
+
+- **max per-name weight** and **max gross exposure** (lot-aligned sizing, cash-checked);
+- **daily-loss halt** — stop opening risk when down past the limit (exits still allowed);
+- **stop-loss** — exit a name down past the threshold from its entry;
+- **order-count cap** and a manual **kill switch**.
+
+The halt blocks **new buys only** — stop-losses and exits always go through.
+
+## Daily report
+
+`daily_report(broker, fills, prices)` renders a Markdown summary (equity, fills,
+costs, open positions, unrealized P&L) — generate it at close from a scheduled job.
+
+## Going live on a QMT simulation account
+
+1. On the **MiniQMT machine**, configure `QmtBroker(account_id=..., mini_qmt_path=...)`
+   and verify the `xttrader` calls (scaffolded — must be checked on the box).
+2. Run with `dry_run=True` and watch the logged orders.
+3. Flip to `dry_run=False` with `QmtBroker` → orders reach your **simulation** account.
+
+:::caution Stop-loss can't be backtested by the vectorized engine
+The stop-loss is path-dependent, so the [vectorized backtest](./backtest) can't
+validate it. The `SimBroker` here is the start of the event-driven path that can —
+backtest the stop-loss before trusting it live.
+:::
