@@ -62,17 +62,36 @@ The last three are **portfolio-level and path-dependent** — structurally out o
 reach for a vectorized weight engine, which assumes you can always hit the target
 weight with infinitely divisible capital and computes the whole series at once.
 
-They require the planned **event-driven tier**: an `Account` (cash + positions in
-real shares), a `Broker` (fills orders against cash/lots/margin and triggers forced
-liquidation), and a `Portfolio` (allocates one capital pool across strategies).
-
 :::caution Interpret results accordingly
 Treat vectorized results as **signal research** — "does the edge exist, after
 costs?" — not as a faithful simulation of trading the strategy with real money.
 :::
 
-## Roadmap
+## Event-driven backtest
 
-Portfolio / cross-sectional backtests (weights per symbol via `.over("symbol")`),
-an **event-driven engine** (Account / Broker / Portfolio) covering the limitations
-above, and a dashboard backtest page.
+`execution.EventDrivenBacktest` is the second tier. It replays history **bar-by-bar**
+through the execution layer's `SimBroker` + `RiskManager` — the same machinery that
+trades live — so it models the **path-dependent** behaviour the vectorized engine
+can't: the **stop-loss**, plus real cash, integer 手/lots, and per-name sizing
+(capital constraints). It lives in [`execution`](./execution) because it depends on
+the broker; it reuses `BacktestResult` for stats and charts.
+
+```python
+from super_trade.execution import EventDrivenBacktest, RiskManager, RiskLimits
+
+result = EventDrivenBacktest(
+    store, SmaCross(10, 30), cash=1_000_000, universe=["600519"],
+    risk=RiskManager(RiskLimits(stop_loss=0.08)),
+).run()
+print(result.stats())          # same BacktestResult API as the vectorized run
+result.equity_curve().show()
+```
+
+The strategy's target column is precomputed once over the window — valid (no
+lookahead) because indicators are causal. This is the tier to **validate a
+stop-loss before running it live**: on the sandbox, an 8% stop cut max drawdown
+from −23.5% to −4.8% versus the vectorized run.
+
+Still vectorized-only / future: portfolio capital allocation across **multiple**
+strategies (多策略资金竞争), margin/forced liquidation, and cross-sectional weights
+via `.over("symbol")`.

@@ -56,15 +56,32 @@ class Strategy(ABC):
 后三者都是**组合层面且路径依赖**的——对一个向量化权重引擎而言结构性地无法实现：它假设
 你总能以无限可分的资金精确达到目标权重，并一次性计算整段序列。
 
-它们需要规划中的**事件驱动层**：`Account`（现金 + 以真实股数计的持仓）、`Broker`（按
-现金/手数/保证金撮合订单并触发强平）、以及 `Portfolio`（在多策略间分配同一资金池）。
-
 :::caution 据此解读结果
 请把向量化结果当作**信号研究**——“扣除成本后，这个超额收益是否存在？”——而不是用真金
 白银执行该策略的忠实模拟。
 :::
 
-## 路线图
+## 事件驱动回测
 
-组合 / 截面回测（通过 `.over("symbol")` 给每只股票分配权重）、覆盖上述局限的**事件驱动
-引擎**（Account / Broker / Portfolio），以及仪表盘的回测页面。
+`execution.EventDrivenBacktest` 是第二档。它**逐 bar**地把历史回放到执行层的
+`SimBroker` + `RiskManager`（与实盘相同的机制），因此能建模向量化引擎无法处理的**路径
+依赖**行为：**止损**，以及真实现金、整数手、按标的的仓位上限（资金约束）。它位于
+[`execution`](./execution)（依赖 broker），并复用 `BacktestResult` 输出统计与图表。
+
+```python
+from super_trade.execution import EventDrivenBacktest, RiskManager, RiskLimits
+
+result = EventDrivenBacktest(
+    store, SmaCross(10, 30), cash=1_000_000, universe=["600519"],
+    risk=RiskManager(RiskLimits(stop_loss=0.08)),
+).run()
+print(result.stats())          # 与向量化运行相同的 BacktestResult API
+result.equity_curve().show()
+```
+
+策略的目标列在窗口上一次性预计算——这是合法的（无未来函数），因为指标是因果的。这正是
+**在实盘前验证止损**的那一档：在 sandbox 上，8% 止损把最大回撤从 −23.5% 降到 −4.8%
+（相比向量化运行）。
+
+仍仅向量化 / 未来：在**多个**策略间分配资金池（多策略资金竞争）、保证金/强平，以及通过
+`.over("symbol")` 的截面权重。
