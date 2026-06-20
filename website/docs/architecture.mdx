@@ -3,10 +3,21 @@ sidebar_position: 3
 title: Architecture
 ---
 
+import BrowserOnly from '@docusaurus/BrowserOnly';
+
 # Architecture
 
 The platform is a set of layers, each behind an interface, with **plain Polars
 DataFrames** flowing one direction: downstream.
+
+<BrowserOnly fallback={<div>Loading diagram…</div>}>
+  {() => {
+    const ArchitectureDiagram = require('@site/src/components/ArchitectureDiagram').default;
+    return <ArchitectureDiagram />;
+  }}
+</BrowserOnly>
+
+The Python package mirrors that flow:
 
 ```
 src/super_trade/

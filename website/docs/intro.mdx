@@ -4,21 +4,23 @@ sidebar_position: 1
 title: Overview
 ---
 
+import BrowserOnly from '@docusaurus/BrowserOnly';
+
 # super-trade
 
 `super-trade` is a quantitative trading **data platform** for the **China A-share**
 market — built for backtesting and research by a personal/retail quant.
 
 It is organized as a one-directional pipeline, each stage behind an interface so
-backends are swappable and testable:
+backends are swappable and testable. Plain Polars DataFrames flow downstream
+between every layer:
 
-```
-acquire (sources) → store (data) → orchestrate (ingest)
-                                        ↓
-                  metrics → backtest → viz → dashboard
-```
-
-Plain Polars DataFrames flow downstream between every layer.
+<BrowserOnly fallback={<div>Loading diagram…</div>}>
+  {() => {
+    const ArchitectureDiagram = require('@site/src/components/ArchitectureDiagram').default;
+    return <ArchitectureDiagram />;
+  }}
+</BrowserOnly>
 
 ## Layers at a glance
 
