@@ -45,7 +45,34 @@ on `metrics`.
 `BacktestResult` exposes `stats()` (dict of summary metrics), `trades()` (position
 changes), and `equity_curve()` / `drawdown()` (Plotly figures).
 
+## Limitations — what is *not* modeled
+
+The vectorized engine works in **fractional target weights**, one strategy on one
+symbol. That keeps it fast and composable, but it **cannot** express the following
+real-world frictions:
+
+| Concern | Modeled? | Why / what it needs |
+|---|---|---|
+| Commission (手续费) / stamp tax (印花税) / slippage (滑点) | ✅ via `CostModel` | charged on turnover; stamp tax is sell-side only |
+| **Capital constraints (资金约束)** — cash balance, integer 手/lots, can't buy beyond available cash | ❌ | needs an account model tracking cash + shares |
+| **Forced liquidation (被迫清仓)** — margin stop-out | ❌ | path-dependent; needs a sequential loop checking equity each bar |
+| **Multi-strategy capital competition (多策略资金竞争)** | ❌ | needs a portfolio allocating one capital pool across strategies |
+
+The last three are **portfolio-level and path-dependent** — structurally out of
+reach for a vectorized weight engine, which assumes you can always hit the target
+weight with infinitely divisible capital and computes the whole series at once.
+
+They require the planned **event-driven tier**: an `Account` (cash + positions in
+real shares), a `Broker` (fills orders against cash/lots/margin and triggers forced
+liquidation), and a `Portfolio` (allocates one capital pool across strategies).
+
+:::caution Interpret results accordingly
+Treat vectorized results as **signal research** — "does the edge exist, after
+costs?" — not as a faithful simulation of trading the strategy with real money.
+:::
+
 ## Roadmap
 
 Portfolio / cross-sectional backtests (weights per symbol via `.over("symbol")`),
-an event-driven engine for path-dependent execution, and a dashboard backtest page.
+an **event-driven engine** (Account / Broker / Portfolio) covering the limitations
+above, and a dashboard backtest page.
