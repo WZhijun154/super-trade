@@ -1,4 +1,5 @@
 import React from 'react';
+import {useColorMode} from '@docusaurus/theme-common';
 import {
   ReactFlow,
   Background,
@@ -80,6 +81,7 @@ const edges = [
 ];
 
 export default function ArchitectureDiagram() {
+  const {colorMode} = useColorMode(); // 'light' | 'dark', follows the Docusaurus theme
   return (
     <div
       style={{
@@ -93,6 +95,7 @@ export default function ArchitectureDiagram() {
       <ReactFlow
         nodes={nodes}
         edges={edges}
+        colorMode={colorMode}
         fitView
         fitViewOptions={{padding: 0.15}}
         nodesDraggable={false}
