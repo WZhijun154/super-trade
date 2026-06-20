@@ -1,0 +1,48 @@
+---
+sidebar_position: 3
+title: Architecture
+---
+
+# Architecture
+
+The platform is a set of layers, each behind an interface, with **plain Polars
+DataFrames** flowing one direction: downstream.
+
+```
+src/super_trade/
+├── data/        STORAGE — DataStore (ABC) + ClickHouseStore; Bar model
+├── sources/     ACQUISITION — DataSource (ABC) + AkshareSource, QmtSource
+├── ingest/      PIPELINE — RateLimiter + DailyBackfill
+├── metrics/     INDICATORS — Polars-expression metrics + scalar summary stats
+├── backtest/    BACKTEST — Strategy, VectorizedEngine, CostModel, BacktestResult
+├── viz/         CHARTS — pure Plotly figure builders
+└── observability.py  configure_logfire()
+dashboard/       Streamlit app (presentation only)
+```
+
+## Principles
+
+- **Interfaces, not implementations.** `DataStore` and `DataSource` are abstract;
+  concrete backends (ClickHouse, akshare, QMT) are swappable and testable.
+- **One-directional data flow.** Each layer depends only on the ones below it and
+  consumes plain DataFrames — no upward or cyclic dependencies.
+- **Reuse, don't reinvent.** The backtester computes its stats with
+  `metrics.summary` and its charts with `viz`; the dashboard is a thin shell over
+  `DataStore` + `metrics` + `viz`.
+- **Real data only for research.** Backtests read real bars from a `DataStore`.
+  Synthetic/mock data is **test-only** and lives under `tests/`, so production and
+  backtest code cannot import it.
+
+## Why these choices
+
+- **ClickHouse is the cache.** A `ReplacingMergeTree` keyed by
+  `(symbol, interval, timestamp)` makes re-ingesting idempotent; the backfill
+  reads `latest_timestamp` and fetches only the missing tail.
+- **`hfq` daily bars only (v1).** Backward-adjusted prices are stable over time
+  (correct for reproducible backtests); there is intentionally no `adjust`
+  dimension in the schema yet.
+- **Vectorized backtests first.** Signals are Polars expressions over the metrics;
+  P&L is computed across the whole frame at once. An event-driven engine is a
+  later addition for path-dependent execution.
+
+See the [Layers](./layers/data) section for each component in detail.

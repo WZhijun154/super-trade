@@ -1,0 +1,46 @@
+---
+slug: /
+sidebar_position: 1
+title: Overview
+---
+
+# super-trade
+
+`super-trade` is a quantitative trading **data platform** for the **China A-share**
+market — built for backtesting and research by a personal/retail quant.
+
+It is organized as a one-directional pipeline, each stage behind an interface so
+backends are swappable and testable:
+
+```
+acquire (sources) → store (data) → orchestrate (ingest)
+                                        ↓
+                  metrics → backtest → viz → dashboard
+```
+
+Plain Polars DataFrames flow downstream between every layer.
+
+## Layers at a glance
+
+| Layer | Package | Responsibility |
+|---|---|---|
+| Storage | `super_trade.data` | `DataStore` + ClickHouse backend; the `Bar` model |
+| Acquisition | `super_trade.sources` | `DataSource` + akshare & QMT implementations |
+| Pipeline | `super_trade.ingest` | cache-aware, idempotent daily backfill |
+| Metrics | `super_trade.metrics` | Polars-expression indicators + scalar summary stats |
+| Backtest | `super_trade.backtest` | vectorized engine, strategies, A-share costs |
+| Visualization | `super_trade.viz` | pure Plotly chart builders |
+| Dashboard | `dashboard/` | Streamlit explorer |
+
+## Data strategy
+
+- **akshare** provides the bulk of free historical data (scraped from
+  eastmoney/Sina).
+- **QMT** (broker terminal) provides accurate recent/intraday/precise data.
+
+Both sit behind the same `DataSource` interface, so QMT slots in without touching
+storage, metrics, or backtests. v1 stores **`hfq` (backward-adjusted) daily bars**
+— stable over time and correct for backtesting.
+
+Start with [Getting started](./getting-started) or the
+[Architecture](./architecture) overview.
