@@ -4,10 +4,12 @@ title: Backtest
 
 # Backtest — `super_trade.backtest`
 
-A **vectorized** engine: a strategy emits target weights as a Polars expression,
-and P&L is computed across the whole frame at once. It reuses every layer below it
-— signals from `metrics`, stats from `metrics.summary`, charts from `viz`, real
-bars from `DataStore`.
+`super-trade` has **two backtest engines** that take the *same* `Strategy` but
+compute results in fundamentally different ways: a fast **vectorized** engine
+(`VectorizedEngine`) for signal research, and a faithful **event-driven** engine
+(`EventDrivenBacktest`) for execution-sensitive logic. Both reuse the layers below —
+signals from `metrics`, stats from `metrics.summary`, charts from `viz`, real bars
+from `DataStore` — and both return a `BacktestResult`.
 
 ```python
 from super_trade.backtest import VectorizedEngine, SmaCross
@@ -17,6 +19,65 @@ result = VectorizedEngine().run(bars, SmaCross(10, 30))
 print(result.stats())          # sharpe, cagr, max_drawdown, calmar, ...
 result.equity_curve().show()   # Plotly figure via viz
 ```
+
+## Vectorized vs event-driven
+
+This is the most important concept to grasp. The two engines answer different
+questions.
+
+### Vectorized — compute the whole thing at once
+
+`VectorizedEngine` treats a backtest like a **spreadsheet**: it builds whole
+**columns** with array math (Polars), with **no Python loop over bars**.
+
+1. the strategy produces a **target weight for every bar at once** —
+   `Strategy.positions()` is a Polars expression;
+2. it **lags** that column one bar (`shift(1)`) so you trade on the *next* bar — that
+   is how it avoids lookahead;
+3. it multiplies the held weight by each bar's return, subtracts costs, and takes a
+   cumulative product → the equity curve.
+
+Because it is all column operations, it runs in microseconds over years of data.
+The trade-off: it assumes you can **always hit the target weight exactly**, with
+infinitely divisible capital, and it keeps **no evolving state**. So it cannot model
+anything that depends on the *path* — your actual cash, integer 手/lots, or a
+**stop-loss** that fires from your real entry price.
+
+→ Use it for **fast signal research**: "does this rule have an edge, after costs?"
+
+### Event-driven — step through time, react to state
+
+`EventDrivenBacktest` does what real trading does: it **loops bar-by-bar**, and at
+each step a **broker + risk manager react to the current state** — your cash, your
+positions, the price right now — and decide orders. At each bar it:
+
+1. marks the account to market;
+2. checks **stop-losses** against each holding's actual entry price → sells if breached;
+3. evaluates the strategy's signal → sizes a buy with the **cash and lots you actually
+   have**;
+4. fills orders through the `SimBroker`, updating cash and positions.
+
+Because it carries **evolving state** and makes **sequential decisions**, it models
+what the vectorized engine can't: stop-loss, real cash / board-lot limits, per-name
+sizing. It is slower (a Python loop), but faithful — and the **same loop drives live
+trading** (swap `SimBroker` for `QmtBroker`).
+
+→ Use it to **validate execution-sensitive logic** (especially the stop-loss) before
+going live.
+
+### Side by side
+
+| | Vectorized (`VectorizedEngine`) | Event-driven (`EventDrivenBacktest`) |
+|---|---|---|
+| How it computes | whole columns at once (no loop) | bar-by-bar loop |
+| State | none (assumes target weight always hit) | evolving account: cash + share positions |
+| Speed | very fast | slower |
+| Stop-loss / cash / lots | ❌ can't model | ✅ modelled |
+| Same code path as live? | no | yes (shares the broker + risk loop) |
+| Use for | fast signal research | execution-faithful validation |
+
+Both return a `BacktestResult`, so you can run the same strategy through each and
+compare directly.
 
 ## Strategy
 
