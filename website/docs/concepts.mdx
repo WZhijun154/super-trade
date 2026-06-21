@@ -26,6 +26,28 @@ The classic trading pipeline has three distinct stages:
 - **Order** — the trade that reconciles your *current* holding with the target.
 - **Fill** — the executed order, with its cost.
 
+### Long, flat, short — what the weight means
+
+The **target weight** is how much of your capital sits in a position, as a fraction
+of equity:
+
+- **Long (做多)** — you *own* the asset and profit when its price **rises**. Weight
+  `1.0` = fully invested (100% of equity in it); `0.5` = half in, half cash.
+- **Flat (空仓)** — you hold **no position**, just cash. Weight `0`. Price moves don't
+  affect you; this is how a strategy "sits out".
+- **Short (做空)** — you *borrow and sell* the asset, profiting when its price
+  **falls**. Weight `< 0` (e.g. `-1.0`).
+
+So "long when the fast MA is above the slow MA, else flat" simply switches the weight
+between `1.0` and `0` — buy in, then sell back to cash.
+
+:::note[A-share shorting is restricted]
+Direct short-selling of individual A-shares is limited for retail (margin /
+securities-lending, restricted lists). In practice your strategies will mostly be
+**long or flat** (weight `0`–`1`). The framework allows negative weights, but treat
+shorting as advanced and often unavailable.
+:::
+
 ## What `super-trade` has today
 
 We deliberately **fuse signal + sizing into a single target weight**. A `Strategy`
