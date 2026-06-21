@@ -1,0 +1,83 @@
+---
+sidebar_position: 4
+title: 概念
+---
+
+import BrowserOnly from '@docusaurus/BrowserOnly';
+
+# 概念
+
+回测与执行背后的心智模型：策略的“想法”如何变成一笔交易，以及“模拟”到底指哪几种。
+
+## 信号 → 目标权重 → 订单
+
+经典的交易流水线有三个不同阶段：
+
+<BrowserOnly fallback={<div>正在加载图…</div>}>
+  {() => {
+    const ConceptDiagram = require('@site/src/components/ConceptDiagram').default;
+    return <ConceptDiagram />;
+  }}
+</BrowserOnly>
+
+- **信号 / alpha**——策略*所想*：一个分数，或离散的 +1/0/−1。
+- **目标权重**——经过定量与风控后*持有多少*（例如权益的 20%）。
+- **订单**——把*当前*持仓与目标对齐的那笔交易。
+- **成交**——已执行的订单及其成本。
+
+## `super-trade` 目前的做法
+
+我们有意把**信号与定量合并为单一目标权重**。`Strategy` 直接给出目标：
+
+```python
+class Strategy(ABC):
+    def positions(self) -> pl.Expr:   # 每根 bar 的目标权重：1.0 做多、0 空仓、<0 做空
+```
+
+`SmaCross` 返回 `1.0`/`0.0`，`RsiReversion` 亦然——所以我们的策略*就是*信号，只是以权重
+表达。下游各阶段则是真实且一等的：
+
+- **向量化引擎**把权重直接转成盈亏；
+- **事件驱动引擎 / 实盘**里由 `RiskManager` 做**定量**（权重 → 按手取整、受现金与风控
+  上限约束的股数），再由 `Broker` 产出 `Order` → `Fill`。
+
+因此 `Order`/`Fill`/`RiskManager` 都存在；独立的 `Signal` 类型则没有——对单标的多/空仓
+策略而言它是多余的。
+
+## 三档模拟
+
+“模拟”在这里有三种含义，由最不真实到最真实：
+
+| 档位 | 运行什么 | 数据 | 资金 |
+|---|---|---|---|
+| **向量化回测** | `VectorizedEngine`——数组运算、无循环 | 历史 | 抽象权重 |
+| **事件驱动回测** | `EventDrivenBacktest` 经 `SimBroker`——逐 bar、真实现金/手数/止损 | 历史 | 模拟 |
+| **实盘（dry-run / QMT 模拟）** | `ExecutionEngine` + `QmtBroker` | 实时 | dry-run 仅记录，或 **QMT 模拟账户**假钱 |
+
+后两档才是“真实模拟”：事件驱动的 `SimBroker` 在历史上模拟执行，而 **QMT 模拟账户**用假钱
+在实时行情上交易。三档都运行*同一个* `Strategy`。
+
+## 走向多因子：Signal + Sizer
+
+当你从单标的多/空仓转向**截面 / 多因子** alpha（对全市场排序、做多头部、按强度加权）时，
+把信号与定量合在一起会变得别扭。届时干净的模型会把它们拆开：
+
+```python
+# 1) 原始观点：每个 (symbol, bar) 的 alpha 分数——一个 Polars 表达式，适配面板
+class Signal(ABC):
+    def alpha(self) -> pl.Expr: ...
+
+# 2) 在全市场把分数转成目标权重
+class Sizer(ABC):
+    def weights(self, panel: pl.DataFrame) -> pl.DataFrame: ...   # 排序/归一/风险预算
+
+# 3) 引擎 / broker 保持不变：权重 → 订单 → 成交
+```
+
+`Sizer` 也是**组合资金分配**的归属（同一资金池分配给多个标的/策略）——正是
+[回测局限](./layers/backtest)中提到的那个缺口。
+
+:::note[何时引入]
+单标的信号就继续用今天的目标权重 `Strategy`。把 `Signal` + `Sizer` 与组合 / 截面回测
+一起引入——不要提前。
+:::

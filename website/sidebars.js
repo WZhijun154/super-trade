@@ -6,6 +6,7 @@ const sidebars = {
     'intro',
     'getting-started',
     'architecture',
+    'concepts',
     {
       type: 'category',
       label: 'Layers',

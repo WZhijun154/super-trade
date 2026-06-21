@@ -1,0 +1,87 @@
+---
+sidebar_position: 4
+title: Concepts
+---
+
+import BrowserOnly from '@docusaurus/BrowserOnly';
+
+# Concepts
+
+The mental model behind backtesting and execution: how a strategy's idea becomes a
+trade, and the different ways "simulation" means.
+
+## Signal → target weight → order
+
+The classic trading pipeline has three distinct stages:
+
+<BrowserOnly fallback={<div>Loading diagram…</div>}>
+  {() => {
+    const ConceptDiagram = require('@site/src/components/ConceptDiagram').default;
+    return <ConceptDiagram />;
+  }}
+</BrowserOnly>
+
+- **Signal / alpha** — what the strategy *thinks*: a score, or a discrete +1/0/−1.
+- **Target weight** — *how much to hold*, after sizing and risk (e.g. 20% of equity).
+- **Order** — the trade that reconciles your *current* holding with the target.
+- **Fill** — the executed order, with its cost.
+
+## What `super-trade` has today
+
+We deliberately **fuse signal + sizing into a single target weight**. A `Strategy`
+emits the target directly:
+
+```python
+class Strategy(ABC):
+    def positions(self) -> pl.Expr:   # target weight per bar: 1.0 long, 0 flat, <0 short
+```
+
+`SmaCross` returns `1.0`/`0.0`, `RsiReversion` likewise — so our strategies *are*
+signals, expressed as a weight. The downstream stages are real, first-class:
+
+- the **vectorized engine** turns weights straight into P&L;
+- the **event-driven engine / live** has the `RiskManager` do the **sizing** (weight →
+  lot-aligned shares within cash and risk caps) and the `Broker` produce `Order` → `Fill`.
+
+So `Order`/`Fill`/`RiskManager` exist; a standalone `Signal` type does not — for
+single-name long/flat strategies it would be overhead.
+
+## The three simulation tiers
+
+"Simulation" means three different things here, from least to most realistic:
+
+| Tier | What runs | Data | Money |
+|---|---|---|---|
+| **Vectorized backtest** | `VectorizedEngine` — array math, no loop | historical | abstract weights |
+| **Event-driven backtest** | `EventDrivenBacktest` via `SimBroker` — bar-by-bar, real cash/lots/stop-loss | historical | simulated |
+| **Live (dry-run / QMT sim)** | `ExecutionEngine` + `QmtBroker` | real-time | dry-run logs only, or **QMT 模拟账户** fake money |
+
+The bottom two are "real simulation": the event-driven `SimBroker` models execution
+on history, and the **QMT simulation account** trades real-time markets with fake
+money. All three run the *same* `Strategy`.
+
+## Toward multi-factor: Signal + Sizer
+
+When you move from single-name long/flat to **cross-sectional / multi-factor** alpha
+(rank the whole universe, go long the top names, weight by conviction), fusing signal
+and sizing gets awkward. Then the clean model splits them:
+
+```python
+# 1) raw view: an alpha score per (symbol, bar) — a Polars expr, panel-friendly
+class Signal(ABC):
+    def alpha(self) -> pl.Expr: ...
+
+# 2) turn scores into target weights across the universe
+class Sizer(ABC):
+    def weights(self, panel: pl.DataFrame) -> pl.DataFrame: ...   # rank/normalize/risk-budget
+
+# 3) engine / broker stay the same: weights → orders → fills
+```
+
+A `Sizer` is also where **portfolio capital allocation** lives (one cash pool across
+many names/strategies) — the same gap noted in the [backtest limitations](./layers/backtest).
+
+:::note[When to add it]
+Stick with today's target-weight `Strategy` for single-name signals. Introduce
+`Signal` + `Sizer` together with portfolio/cross-sectional backtests — not before.
+:::
