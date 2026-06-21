@@ -24,7 +24,7 @@ df = df.with_columns(m.macd().alias("macd")).unnest("macd")   # struct output
 - **Scalar summary stats** — one value for the *whole series* (use in `select` /
   `group_by().agg()`).
 
-:::tip New to indicators?
+:::tip[New to indicators?]
 Start with **SMA/EMA** (trend), **RSI** and **MACD** (momentum), **Bollinger Bands**
 and **ATR** (volatility), and **Sharpe** + **max drawdown** (performance). The rest
 are variations on these ideas.

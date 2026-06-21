@@ -22,7 +22,7 @@ df = df.with_columns(m.macd().alias("macd")).unnest("macd")   # struct 输出
 - **逐 bar 指标**——每个 bar 一个值（一列）。
 - **标量汇总统计**——对*整段序列*得到一个值（用于 `select` / `group_by().agg()`）。
 
-:::tip 初次接触指标？
+:::tip[初次接触指标？]
 先从 **SMA/EMA**（趋势）、**RSI** 与 **MACD**（动量）、**布林带** 与 **ATR**（波动率）、
 以及 **夏普比率** + **最大回撤**（绩效）入手。其余都是这些思想的变体。
 :::

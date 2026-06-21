@@ -62,7 +62,7 @@ The last three are **portfolio-level and path-dependent** — structurally out o
 reach for a vectorized weight engine, which assumes you can always hit the target
 weight with infinitely divisible capital and computes the whole series at once.
 
-:::caution Interpret results accordingly
+:::caution[Interpret results accordingly]
 Treat vectorized results as **signal research** — "does the edge exist, after
 costs?" — not as a faithful simulation of trading the strategy with real money.
 :::

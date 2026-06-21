@@ -11,7 +11,7 @@ controls, and is the bridge between backtest and live: the **same**
 `Strategy` drives a simulated broker (dry-run / backtest) or a QMT broker (live on
 a **simulation account**).
 
-:::danger Sensitive layer
+:::danger[Sensitive layer]
 This layer can place orders. It defaults to **`dry_run=True`** (logs orders,
 sends nothing), and is intended for a **QMT 模拟账户 (simulation account)**. Keep the
 `RiskManager` limits on, and only set `dry_run=False` once you've watched the
@@ -79,7 +79,7 @@ costs, open positions, unrealized P&L) — generate it at close from a scheduled
 2. Run with `dry_run=True` and watch the logged orders.
 3. Flip to `dry_run=False` with `QmtBroker` → orders reach your **simulation** account.
 
-:::caution Stop-loss can't be backtested by the vectorized engine
+:::caution[Stop-loss can't be backtested by the vectorized engine]
 The stop-loss is path-dependent, so the [vectorized backtest](./backtest) can't
 validate it. The `SimBroker` here is the start of the event-driven path that can —
 backtest the stop-loss before trusting it live.
