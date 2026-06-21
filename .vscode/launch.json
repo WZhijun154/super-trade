@@ -23,6 +23,28 @@
       "justMyCode": false
     },
     {
+      "name": "Debug vectorized backtest example",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/examples/vectorized_backtest.py",
+      "python": "${workspaceFolder}/.venv/bin/python",
+      "cwd": "${workspaceFolder}",
+      "envFile": "${workspaceFolder}/.env",
+      "console": "integratedTerminal",
+      "justMyCode": false
+    },
+    {
+      "name": "Debug event-driven backtest example",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/examples/event_driven_backtest.py",
+      "python": "${workspaceFolder}/.venv/bin/python",
+      "cwd": "${workspaceFolder}",
+      "envFile": "${workspaceFolder}/.env",
+      "console": "integratedTerminal",
+      "justMyCode": false
+    },
+    {
       "name": "Debug current file",
       "type": "debugpy",
       "request": "launch",
