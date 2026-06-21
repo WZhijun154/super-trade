@@ -2,6 +2,8 @@
 title: Execution
 ---
 
+import BrowserOnly from '@docusaurus/BrowserOnly';
+
 # Execution — `super_trade.execution`
 
 The live-trading layer. It runs a strategy against a **broker**, with risk
@@ -20,13 +22,12 @@ dry-run output.
 
 Backtest and live share one code path — only the broker changes:
 
-```
-        Strategy.positions()  +  RiskManager (stop-loss, caps)
-                       │   identical
-            ┌──────────┴───────────┐
-       SimBroker                QmtBroker
-   (dry-run / backtest)      (live, QMT simulation account)
-```
+<BrowserOnly fallback={<div>Loading diagram…</div>}>
+  {() => {
+    const BridgeDiagram = require('@site/src/components/BridgeDiagram').default;
+    return <BridgeDiagram />;
+  }}
+</BrowserOnly>
 
 A `Broker` exposes `cash()`, `positions()`, and `place_order()`. `SimBroker` fills
 against an in-memory `Account` (cash + positions in real 手/shares), reusing the

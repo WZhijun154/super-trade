@@ -2,6 +2,8 @@
 title: 执行（execution）
 ---
 
+import BrowserOnly from '@docusaurus/BrowserOnly';
+
 # 执行 — `super_trade.execution`
 
 实盘交易层。它让策略通过**券商（broker）**运行，并带有风控；它也是回测与实盘之间的桥梁：
@@ -18,13 +20,12 @@ title: 执行（execution）
 
 回测与实盘共用同一条代码路径——只换 broker：
 
-```
-        Strategy.positions()  +  RiskManager（止损、上限）
-                       │   完全相同
-            ┌──────────┴───────────┐
-       SimBroker                QmtBroker
-   （dry-run / 回测）        （实盘，QMT 模拟账户）
-```
+<BrowserOnly fallback={<div>正在加载架构图…</div>}>
+  {() => {
+    const BridgeDiagram = require('@site/src/components/BridgeDiagram').default;
+    return <BridgeDiagram />;
+  }}
+</BrowserOnly>
 
 `Broker` 暴露 `cash()`、`positions()`、`place_order()`。`SimBroker` 针对内存中的
 `Account`（现金 + 以真实手/股计的持仓）撮合，并复用回测的 `CostModel`，因此成本一致。
