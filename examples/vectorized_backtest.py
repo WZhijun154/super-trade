@@ -54,7 +54,7 @@ def main() -> None:
 
     # Save one equity curve to HTML you can open in a browser.
     fig = engine.run(bars, SmaCross(10, 30)).equity_curve()
-    out = "/tmp/vectorized_equity.html"
+    out = "/home/wangzhijun/Projects/super-trade/vectorized_equity.html"
     fig.write_html(out)
     print(f"\nEquity curve written to {out}")
 

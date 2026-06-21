@@ -58,14 +58,54 @@ engine.run(interval_seconds=10) # scan every 10s (blocks; Ctrl-C to stop)
 
 ## Risk management
 
-`RiskManager` / `RiskLimits` enforce, before every order:
+`RiskManager` is the **safety layer between a strategy's signal and an actual
+order**. The strategy says *whether* to be long; the `RiskManager` decides *how much*
+you may buy and *whether to block or force* a trade — so risk rules live in one
+place. It's used by the event-driven backtest and live execution (not the
+vectorized engine).
 
-- **max per-name weight** and **max gross exposure** (lot-aligned sizing, cash-checked);
-- **daily-loss halt** — stop opening risk when down past the limit (exits still allowed);
-- **stop-loss** — exit a name down past the threshold from its entry;
-- **order-count cap** and a manual **kill switch**.
+### Limits (`RiskLimits`)
 
-The halt blocks **new buys only** — stop-losses and exits always go through.
+| Limit | Default | Meaning |
+|---|---|---|
+| `max_position_weight` | 0.20 | at most 20% of equity in any one name |
+| `max_gross_exposure` | 0.95 | at most 95% invested in total (keep a cash buffer) |
+| `max_daily_loss` | 0.05 | halt new buys once down 5% on the day |
+| `stop_loss` | 0.08 | exit a name down 8% from its entry price |
+| `max_orders_per_day` | 200 | cap on orders per session |
+
+### What it does
+
+- **Position sizing** — `max_buy_shares(symbol, price, equity, broker)` returns the
+  largest **board-lot-aligned** buy allowed: the **minimum** of three budgets, floored
+  to whole 手 (`shares = (budget // (price × 100)) × 100`):
+  - *per-name*: `max_position_weight × equity` − what you already hold,
+  - *gross*: `max_gross_exposure × equity` − total invested,
+  - your available **cash**.
+- **Stop-loss** — `stop_triggered(pos, price)` is true when
+  `price ≤ avg_price × (1 − stop_loss)`; the engine then sells that name.
+- **Daily-loss halt** — `start_day(equity)` snapshots the morning equity;
+  `update_daily_loss(equity)` halts once equity drops past `max_daily_loss`.
+- **Order-count cap** — `can_trade()` becomes false after `max_orders_per_day`.
+- **Kill switch** — `kill()` halts everything immediately.
+
+### Buys are gated; exits never are
+
+When halted (daily-loss hit, kill switch, or order cap), **new buys are blocked but
+sells and stop-losses always go through** — you can always reduce risk. (`can_trade()`
+is checked before entries; exits bypass it.)
+
+### Per-session state
+
+A `RiskManager` carries intraday state (the day's starting equity, order count, halt
+flag), so **create a fresh one per backtest/session** and call `start_day()` at the
+open — the event-driven backtest and `ExecutionEngine` do this for you.
+
+```python
+from super_trade.execution import RiskManager, RiskLimits
+
+risk = RiskManager(RiskLimits(max_position_weight=0.15, stop_loss=0.06))
+```
 
 ## Daily report
 
