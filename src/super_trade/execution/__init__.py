@@ -16,6 +16,7 @@ from __future__ import annotations
 from .broker import LOT_SIZE, Account, Broker, Fill, Order, Position, Side
 from .engine import ExecutionEngine
 from .event_driven import EventDrivenBacktest
+from .market import MarketRules, limit_pct
 from .qmt_broker import QmtBroker
 from .report import daily_report
 from .risk import RiskLimits, RiskManager
@@ -28,6 +29,7 @@ __all__ = [
     "EventDrivenBacktest",
     "ExecutionEngine",
     "Fill",
+    "MarketRules",
     "Order",
     "Position",
     "QmtBroker",
@@ -36,4 +38,5 @@ __all__ = [
     "Side",
     "SimBroker",
     "daily_report",
+    "limit_pct",
 ]

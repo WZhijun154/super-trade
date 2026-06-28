@@ -58,7 +58,13 @@ def test_costs_reduce_return() -> None:
 def test_stamp_tax_only_on_sell() -> None:
     # one entry (buy) then one exit (sell)
     bars = _bars([100.0, 100.0, 100.0, 100.0])
-    model = CostModel(commission_rate=0.0, stamp_tax_rate=0.001, slippage_rate=0.0)
+    # zero every rate except stamp tax to isolate the sell-only charge
+    model = CostModel(
+        commission_rate=0.0,
+        stamp_tax_rate=0.001,
+        transfer_fee_rate=0.0,
+        slippage_rate=0.0,
+    )
 
     class _InThenOut(Strategy):
         name = "in_then_out"

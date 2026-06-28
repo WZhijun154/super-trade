@@ -107,6 +107,41 @@ from super_trade.execution import RiskManager, RiskLimits
 risk = RiskManager(RiskLimits(max_position_weight=0.15, stop_loss=0.06))
 ```
 
+## A-share market realism (`MarketRules`)
+
+The `EventDrivenBacktest` doesn't just model your *account* (cash, lots, stops) — it
+also models the *market*, so an order that wouldn't have filled in reality doesn't
+fill in the backtest. These rules are on by default via `MarketRules` and apply in
+the bar loop (the `SimBroker` stays a pure fill engine):
+
+- **T+1** — shares bought today can't be sold until the next trading day. A same-day
+  buy is unsellable even by a stop-loss; the position is trapped until tomorrow.
+- **涨跌停 (price limits)** — you can't BUY at the upper limit (no sellers) or SELL at
+  the lower limit (no buyers). The band is inferred from the code prefix via
+  `limit_pct`: STAR/ChiNext (688/300) ±20%, Beijing (4_/8_/920) ±30%, main boards
+  ±10% (ST's true ±5% isn't detectable from the code → falls back to ±10%).
+- **停牌 (suspension)** — a bar with `volume == 0` (or no bar at all) doesn't trade.
+- **Partial fills** — a single order takes at most `participation_rate` (default
+  **10%**) of the bar's volume; the rest doesn't fill.
+
+```python
+from super_trade.execution import EventDrivenBacktest, MarketRules
+
+# defaults are realistic; relax any rule explicitly
+rules = MarketRules(participation_rate=0.25, t_plus_1=False)
+EventDrivenBacktest(store, strategy, universe=["600519"], rules=rules).run()
+```
+
+**Costs** were also brought current: stamp tax **5 bp** (sell-only, the rate since
+2023-08-28), a **¥5 per-order commission floor**, and the **过户费** transfer fee
+(0.1 bp, both sides) — see `CostModel`.
+
+:::tip[Why the numbers drop]
+Turnover-heavy strategies look *worse* under these rules than under the vectorized
+engine — that's the point. T+1 and the ¥5 floor punish churn, and limit/suspension
+guards remove fills you could never have gotten. Treat the gap as the realism tax.
+:::
+
 ## Daily report
 
 `daily_report(broker, fills, prices)` renders a Markdown summary (equity, fills,

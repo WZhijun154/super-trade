@@ -7,7 +7,9 @@ simulation clock ticks once per *minute* (A-share sessions 09:30-11:30 / 13:00-1
 
 Compare this with `vectorized_backtest.py`: same strategies, same data, different
 engine. The event-driven numbers differ because they reflect real share lots, a
-cash budget, per-name position caps, and an 8% stop-loss.
+cash budget, per-name position caps, and an 8% stop-loss — plus A-share market
+rules (T+1, 涨跌停 price limits, 停牌 suspension, volume-based partial fills) that
+are on by default via `MarketRules`.
 
 Prerequisite — seed 1-minute sandbox data once:
     uv run python scripts/seed_sandbox.py minute

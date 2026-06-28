@@ -101,6 +101,37 @@ from super_trade.execution import RiskManager, RiskLimits
 risk = RiskManager(RiskLimits(max_position_weight=0.15, stop_loss=0.06))
 ```
 
+## A 股市场真实性（`MarketRules`）
+
+`EventDrivenBacktest` 不仅模拟你的**账户**（现金、手数、止损），还模拟**市场**——在现实中
+无法成交的订单，在回测里也不会成交。这些规则通过 `MarketRules` 默认开启，作用于逐 bar 循环
+（`SimBroker` 仍是纯粹的撮合引擎）：
+
+- **T+1** —— 当日买入的股票要到下一交易日才能卖出。当日买入即便触发止损也卖不掉，仓位被困到
+  次日。
+- **涨跌停** —— 涨停时无人卖出（买不进），跌停时无人买入（卖不出）。涨跌幅区间由代码前缀经
+  `limit_pct` 推断：科创板/创业板（688/300）±20%，北交所（4_/8_/920）±30%，主板 ±10%
+  （ST 真实的 ±5% 无法仅凭代码识别 → 回退为 ±10%）。
+- **停牌** —— `volume == 0`（或当根 bar 缺失）的 bar 不成交。
+- **部分成交** —— 单笔订单最多吃掉当根 bar 成交量的 `participation_rate`（默认 **10%**），
+  其余无法成交。
+
+```python
+from super_trade.execution import EventDrivenBacktest, MarketRules
+
+# 默认即为真实设定；如需放宽，显式传入
+rules = MarketRules(participation_rate=0.25, t_plus_1=False)
+EventDrivenBacktest(store, strategy, universe=["600519"], rules=rules).run()
+```
+
+**成本**也已更新为现行标准：印花税 **5 bp**（仅卖出，2023-08-28 起的税率）、**每笔 ¥5 佣金
+下限**，以及**过户费**（0.1 bp，双边）—— 见 `CostModel`。
+
+:::tip[为什么收益变低了]
+高换手策略在这些规则下会比向量化引擎*更难看*——这正是目的所在。T+1 与 ¥5 下限惩罚频繁交易，
+涨跌停/停牌守卫剔除了你本就拿不到的成交。把这个差距当作"真实性税"。
+:::
+
 ## 每日报告
 
 `daily_report(broker, fills, prices)` 生成 Markdown 摘要（权益、成交、成本、持仓、浮动

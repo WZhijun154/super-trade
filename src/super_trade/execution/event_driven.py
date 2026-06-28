@@ -15,6 +15,14 @@ indicators are causal, backward-looking only), then **lagged one bar**: a signal
 formed on bar *t*'s close is executed at *t+1*'s **open**, never at the close that
 produced it. Stop-losses are checked against each bar's close. This matches the
 vectorized engine's one-bar lag, so the two tiers are comparable.
+
+On top of that it applies A-share **market** rules (``MarketRules``, default on),
+so an order that wouldn't have filled in reality doesn't fill here:
+
+* **T+1** — shares bought today can't be sold until the next trading day.
+* **涨跌停** — can't BUY at the upper limit or SELL at the lower limit (band by board).
+* **停牌** — a bar with no volume (or no bar) doesn't trade.
+* **partial fills** — an order takes at most a fraction of the bar's volume.
 """
 
 from __future__ import annotations
@@ -28,7 +36,8 @@ from super_trade.backtest.result import BacktestResult
 from super_trade.backtest.strategy import Strategy
 from super_trade.data import DataStore, Interval, load_bars
 
-from .broker import Order, Side
+from .broker import LOT_SIZE, Order, Side
+from .market import MarketRules, limit_pct
 from .risk import RiskManager
 from .sim_broker import SimBroker
 
@@ -42,6 +51,11 @@ class EventDrivenBacktest:
     the live engine uses. That makes it the tier that models **path-dependent**
     behaviour the vectorized engine cannot: stop-loss exits, a finite cash budget,
     integer 手/lot rounding, per-name position caps, and the daily-loss halt.
+
+    On top of the account mechanics it also models A-share *market* rules via
+    ``MarketRules`` (default on): **T+1** (no selling today's buys), **涨跌停**
+    price limits, **停牌** suspension, and a volume-based partial-fill cap — so an
+    order that wouldn't have filled in reality doesn't fill here either.
 
     One run is one ``run()`` call: each call builds a *fresh* account, so an instance
     is reusable and stateless between runs. The strategy's target weights are
@@ -62,6 +76,7 @@ class EventDrivenBacktest:
         universe: list[str] | None = None,
         interval: Interval = Interval.DAY,
         resample_from: Interval | None = None,
+        rules: MarketRules | None = None,
     ) -> None:
         """Configure a run (nothing is read or simulated until ``run()``).
 
@@ -82,12 +97,17 @@ class EventDrivenBacktest:
             resample_from: When set (e.g. ``Interval.MINUTE``), bars are read at this
                 finer granularity and resampled up to ``interval`` on the way in — the
                 "system on 1-minute data" path. ``None`` reads ``interval`` directly.
+            rules: A-share market realism (T+1, price limits, suspension, partial
+                fills). Defaults to ``MarketRules()`` (all on). Pass a relaxed one to
+                disable any of them.
         """
         self._store = store
         self._strategy = strategy
         self._cash = cash
         self._costs = costs or CostModel()
         self._risk = risk or RiskManager()
+        self._rules = rules or MarketRules()
+        self._lot = LOT_SIZE  # board lot (100 shares); fills round down to this
         self._universe = universe
         self._interval = interval
         self._resample_from = resample_from
@@ -103,17 +123,20 @@ class EventDrivenBacktest:
         universe = self._universe or self._store.list_symbols(self._interval)
 
         # ---- Phase 1: pre-load data and precompute signals --------------------
-        # For each symbol we build a lookup: timestamp -> (open, close, signal).
-        # We precompute the strategy's target weight ONCE over the full window;
-        # this is valid (no lookahead) because indicators are *causal* — each
-        # value at bar t only uses data up to t. Doing it up front means the
+        # For each symbol we build a lookup: timestamp -> (open, close, volume,
+        # signal). We precompute the strategy's target weight ONCE over the full
+        # window; this is valid (no lookahead) because indicators are *causal* —
+        # each value at bar t only uses data up to t. Doing it up front means the
         # per-bar loop below is a cheap dict lookup, not a re-evaluation.
         #
         # NO-LOOKAHEAD ENTRY: we lag the target by one bar (`shift(1)`) and act
         # on it at the NEXT bar's OPEN — the standard retail convention. A signal
         # formed from bar t's close is therefore traded at t+1's open, never at
         # the same close that produced it. `signal` below is that lagged target.
-        bars_by_symbol: dict[str, dict[datetime, tuple[float, float, float]]] = {}
+        # `volume` is carried too: it caps partial fills (the participation rate).
+        bars_by_symbol: dict[
+            str, dict[datetime, tuple[float, float, float, float]]
+        ] = {}
         # The union of every symbol's bar timestamps becomes the simulation clock.
         timestamps: set[datetime] = set()
         for symbol in universe:
@@ -131,13 +154,14 @@ class EventDrivenBacktest:
             # on the *previous* bar's decision (executed at this bar's open).
             bars = bars.with_columns(self._strategy.positions().alias("target"))
             bars = bars.with_columns(pl.col("target").shift(1).alias("signal"))
-            # Flatten into a {timestamp: (open, close, signal)} dict for O(1) access.
-            row_map: dict[datetime, tuple[float, float, float]] = {}
+            # Flatten into {timestamp: (open, close, volume, signal)} for O(1) access.
+            row_map: dict[datetime, tuple[float, float, float, float]] = {}
             for row in bars.iter_rows(named=True):
                 signal = row["signal"]
                 row_map[row["timestamp"]] = (
                     float(row["open"]),
                     float(row["close"]),
+                    float(row["volume"]),
                     # signal is null on the first bar (and during warm-up) → flat
                     0.0 if signal is None else float(signal),
                 )
@@ -148,14 +172,23 @@ class EventDrivenBacktest:
         timeline = sorted(timestamps)  # chronological order — the "clock"
         last_price: dict[str, float] = {}  # most recent known close per symbol
         equity_rows: list[dict] = []  # one equity snapshot per timestamp
-        current_date = None  # tracks day boundaries for the risk reset
+        current_date = None  # tracks day boundaries for per-day resets
+        # T+1 ledger: shares bought *today* per symbol (can't be sold until tmrw).
+        bought_today: dict[str, int] = {}
+        # Limit reference: each symbol's close from the *previous* trading day,
+        # used to compute today's 涨跌停 band.
+        prev_ref_close: dict[str, float] = {}
 
         for ts in timeline:
-            # Risk limits like the daily-loss halt and order count are per *day*.
-            # When the calendar day changes, snapshot the day's opening equity and
-            # reset those counters (and clear any prior halt).
+            # Risk limits, the T+1 ledger and the limit reference are per *day*.
+            # When the calendar day changes: snapshot yesterday's closes as the
+            # limit reference, clear today's T+1 ledger, and reset the risk
+            # counters (`last_price` still holds the prior day's closes here,
+            # because we haven't marked today's bars yet).
             if ts.date() != current_date:
                 current_date = ts.date()
+                prev_ref_close = dict(last_price)
+                bought_today = {}
                 risk.start_day(self._equity(broker, last_price))
 
             # Mark prices forward: any symbol that has a bar at this timestamp
@@ -171,16 +204,28 @@ class EventDrivenBacktest:
             risk.update_daily_loss(equity)
 
             # 1) Stop-loss exits run FIRST (risk before reward). For every open
-            #    position, if the price has fallen past its stop, sell it all.
-            #    `stopped` records these so we don't re-buy the same name this bar.
+            #    position past its stop, sell what we're *allowed* to sell at the
+            #    close. `stopped` marks the name (even if the sell is blocked) so
+            #    we never re-buy something we're trying to exit this bar.
+            #    Market rules can block/partial the exit — the harsh-but-real path:
+            #    a 停牌/跌停 bar or shares bought today (T+1) leave you trapped.
             stopped: set[str] = set()
             for symbol, pos in list(broker.positions().items()):
                 price = last_price.get(symbol)
-                if price is not None and risk.stop_triggered(pos, price):
+                if price is None or not risk.stop_triggered(pos, price):
+                    continue
+                stopped.add(symbol)
+                bar = bars_by_symbol[symbol].get(ts)
+                if bar is None:
+                    continue  # 停牌 / no bar today → can't exit, position trapped
+                volume = bar[2]  # (open, close, volume, signal)
+                qty = self._exitable(pos.shares, symbol, bought_today, volume)
+                if qty > 0 and self._tradable(
+                    symbol, Side.SELL, price, volume, prev_ref_close.get(symbol)
+                ):
                     broker.place_order(
-                        Order(symbol, Side.SELL, pos.shares, price, reason="stop_loss")
+                        Order(symbol, Side.SELL, qty, price, reason="stop_loss")
                     )
-                    stopped.add(symbol)
 
             # 2) Signal-driven entries/exits, only for symbols trading right now.
             #    Entries/exits fill at THIS bar's OPEN, driven by `signal` — the
@@ -191,22 +236,37 @@ class EventDrivenBacktest:
                 # Skip symbols with no bar at this timestamp, or just stopped out.
                 if ts not in row_map or symbol in stopped:
                     continue
-                open_px, _close, signal = row_map[ts]
+                open_px, _close, volume, signal = row_map[ts]
+                prev_close = prev_ref_close.get(symbol)
                 held = broker.shares(symbol)  # shares currently held (0 if none)
                 if signal > 0 and held == 0 and risk.can_trade():
-                    # Want long, currently flat, and trading is allowed → size a
-                    # buy within per-name / gross / cash limits and submit it.
+                    # Want long, currently flat, allowed → size a buy within
+                    # per-name / gross / cash limits, then cap it at the bar's
+                    # participation volume, and skip if 停牌/涨停 blocks the buy.
                     shares = risk.max_buy_shares(symbol, open_px, equity, broker)
-                    if shares > 0:
-                        broker.place_order(
+                    cap = self._volume_cap(volume)
+                    if cap is not None:
+                        shares = min(shares, cap)
+                    if shares > 0 and self._tradable(
+                        symbol, Side.BUY, open_px, volume, prev_close
+                    ):
+                        fill = broker.place_order(
                             Order(symbol, Side.BUY, shares, open_px, reason="signal")
                         )
+                        if fill is not None:  # record T+1: these can't sell today
+                            bought_today[symbol] = (
+                                bought_today.get(symbol, 0) + fill.shares
+                            )
                 elif signal <= 0 and held > 0:
-                    # Want flat (or short) but currently long → sell the whole
-                    # position. (Exits are always allowed, even when halted.)
-                    broker.place_order(
-                        Order(symbol, Side.SELL, held, open_px, reason="signal_exit")
-                    )
+                    # Want flat but currently long → sell what T+1 / the volume cap
+                    # allow, if 停牌/跌停 doesn't block it. Unsold shares roll over.
+                    qty = self._exitable(held, symbol, bought_today, volume)
+                    if qty > 0 and self._tradable(
+                        symbol, Side.SELL, open_px, volume, prev_close
+                    ):
+                        broker.place_order(
+                            Order(symbol, Side.SELL, qty, open_px, reason="signal_exit")
+                        )
 
             # Record the post-trade equity + cash for this timestamp; this list
             # becomes the equity curve.
@@ -232,7 +292,79 @@ class EventDrivenBacktest:
 
     @staticmethod
     def _equity(broker: SimBroker, prices: dict[str, float]) -> float:
+        """Mark-to-market account value: cash + every position at current prices.
+
+        This is the broker's total net worth at one instant — the number that
+        becomes the equity curve and feeds the risk manager's daily-loss check.
+
+        Args:
+            broker: The simulated account (its ``cash()`` and open ``positions()``).
+            prices: Latest price per symbol (the bar's close). A symbol missing
+                from this map — e.g. it hasn't traded yet this run — falls back to
+                its ``avg_price`` (entry cost), which marks it flat (no unrealised
+                P&L) rather than crashing on a missing key.
+
+        Returns:
+            Cash plus the summed market value (``shares * price``) of all holdings.
+        """
         return broker.cash() + sum(
             pos.shares * prices.get(sym, pos.avg_price)
             for sym, pos in broker.positions().items()
         )
+
+    def _volume_cap(self, volume: float) -> int | None:
+        """Max lot-aligned shares one order may take this bar (participation cap).
+
+        Returns ``None`` when the cap is disabled (``participation_rate <= 0``) —
+        callers then treat the fill as unconstrained by volume.
+        """
+        rate = self._rules.participation_rate
+        if rate <= 0:
+            return None
+        return int(volume * rate) // self._lot * self._lot
+
+    def _exitable(
+        self,
+        held: int,
+        symbol: str,
+        bought_today: dict[str, int],
+        volume: float,
+    ) -> int:
+        """Shares of ``held`` that may be sold this bar, after T+1 + the volume cap.
+
+        T+1 removes shares bought *today* (``bought_today``); the participation cap
+        then limits the rest to a fraction of the bar's volume. Result is
+        lot-aligned and never negative; 0 means "can't exit this bar".
+        """
+        sellable = held
+        if self._rules.t_plus_1:
+            sellable = max(0, held - bought_today.get(symbol, 0))
+        cap = self._volume_cap(volume)
+        return sellable if cap is None else min(sellable, cap)
+
+    def _tradable(
+        self,
+        symbol: str,
+        side: Side,
+        price: float,
+        volume: float,
+        prev_close: float | None,
+    ) -> bool:
+        """Whether an order of ``side`` could fill at ``price`` on this bar.
+
+        Blocks two A-share conditions: **停牌** (a bar with no volume doesn't
+        trade) and **涨跌停** (at the upper limit there are no sellers, so you
+        can't BUY; at the lower limit no buyers, so you can't SELL). The limit
+        band comes from :func:`limit_pct` (board-specific) applied to the previous
+        day's close; it's skipped when there's no reference close yet (first day).
+        """
+        rules = self._rules
+        if rules.enforce_suspension and volume <= 0:
+            return False  # 停牌 / no trades printed this bar
+        if rules.enforce_price_limits and prev_close is not None:
+            pct = limit_pct(symbol, rules.default_limit_pct)
+            if side is Side.BUY and price >= round(prev_close * (1 + pct), 2):
+                return False  # 涨停 — locked up, no one will sell to you
+            if side is Side.SELL and price <= round(prev_close * (1 - pct), 2):
+                return False  # 跌停 — locked down, no one will buy from you
+        return True

@@ -26,8 +26,9 @@ def test_buy_deducts_cash_with_cost() -> None:
     broker = SimBroker(cash=100_000, costs=CostModel())
     fill = broker.place_order(Order("AAA", Side.BUY, 100, 50.0))
     assert fill is not None
-    # notional 5000 + cost 5000*(0.00025+0.0001) = 5001.75
-    assert broker.cash() == pytest.approx(100_000 - 5001.75)
+    # notional 5000; commission 5000*0.00025=1.25 floored up to ¥5 min, plus
+    # transfer 5000*0.00001=0.05 and slippage 5000*0.0001=0.5 → cost 5.55
+    assert broker.cash() == pytest.approx(100_000 - 5005.55)
     assert broker.shares("AAA") == 100
 
 
