@@ -62,3 +62,42 @@ class RsiReversion(Strategy):
             .otherwise(None)
         )
         return raw.forward_fill().fill_null(0.0)
+
+
+class ScaledRsiReversion(Strategy):
+    """Mean-reversion that *scales* exposure by how oversold RSI is.
+
+    Unlike :class:`RsiReversion` (all-in or all-out), this emits a **fractional
+    target weight** that grows as RSI falls and shrinks as it recovers — a linear
+    ramp from 0 at ``high`` to 1.0 at ``low``, clamped outside that band:
+
+        RSI >= high → 0.0  (flat)
+        RSI <= low  → 1.0  (full)
+        in between  → linearly scaled
+
+    The event-driven engine rebalances toward this weight each bar, so as RSI
+    drifts the position is **bought and sold in tranches** (scale in while it keeps
+    falling, trim as it recovers) — i.e. the same name is traded many times, the
+    common real-world pattern. The vectorized engine reads the weight directly as
+    the invested fraction.
+    """
+
+    def __init__(
+        self,
+        window: int = 14,
+        low: float = 30.0,
+        high: float = 70.0,
+        column: str = "close",
+    ) -> None:
+        self.window = window
+        self.low = low
+        self.high = high
+        self.column = column
+        self.name = f"scaled_rsi_{window}"
+
+    def positions(self) -> pl.Expr:
+        rsi = m.rsi(self.column, self.window)
+        # Linearly map RSI from `high`→0.0 down to `low`→1.0, then clip to [0, 1].
+        weight = (self.high - rsi) / (self.high - self.low)
+        # null/NaN during the RSI warm-up → flat (0.0).
+        return weight.clip(0.0, 1.0).fill_nan(0.0).fill_null(0.0)

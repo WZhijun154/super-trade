@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import sys
 
-from super_trade.backtest import BuyAndHold, RsiReversion, SmaCross
+from super_trade.backtest import BuyAndHold, RsiReversion, ScaledRsiReversion, SmaCross
 from super_trade.data import ClickHouseConfig, ClickHouseStore, Interval, load_bars
 from super_trade.execution import EventDrivenBacktest, RiskLimits, RiskManager
 
@@ -52,7 +52,16 @@ def main() -> None:
             f"({interval.value} bars, cash CNY {cash:,.0f}, 8% stop)\n"
         )
 
-        for strategy in (BuyAndHold(), SmaCross(10, 30), RsiReversion(14, 30, 70)):
+        # ScaledRsiReversion emits a *fractional* target weight → the engine scales
+        # the position in and out in tranches (many fills per name), unlike the
+        # all-or-nothing strategies above.
+        strategies = (
+            BuyAndHold(),
+            SmaCross(10, 30),
+            RsiReversion(14, 30, 70),
+            ScaledRsiReversion(14, 30, 70),
+        )
+        for strategy in strategies:
             result = EventDrivenBacktest(
                 store,
                 strategy,

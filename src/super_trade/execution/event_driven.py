@@ -27,6 +27,7 @@ so an order that wouldn't have filled in reality doesn't fill here:
 
 from __future__ import annotations
 
+import math
 from datetime import datetime
 
 import polars as pl
@@ -51,6 +52,11 @@ class EventDrivenBacktest:
     the live engine uses. That makes it the tier that models **path-dependent**
     behaviour the vectorized engine cannot: stop-loss exits, a finite cash budget,
     integer 手/lot rounding, per-name position caps, and the daily-loss halt.
+
+    Each bar it **rebalances toward the strategy's target weight** (the signal is a
+    fraction of equity, not a 0/1 flag): it sizes the desired position and trades
+    only the difference, so a changing target scales a name in and out over many
+    bars rather than flipping fully on/off.
 
     On top of the account mechanics it also models A-share *market* rules via
     ``MarketRules`` (default on): **T+1** (no selling today's buys), **涨跌停**
@@ -84,7 +90,10 @@ class EventDrivenBacktest:
             store: Source of bars. ``run()`` reads real OHLCV from it per symbol;
                 also supplies the default universe via ``list_symbols(interval)``.
             strategy: The ``Strategy`` whose ``positions()`` expr yields the per-bar
-                target weight (>0 = want long, <=0 = want flat) for every symbol.
+                **target weight** per symbol — the fraction of equity to hold (0 =
+                flat, 1.0 = full, clamped to the per-name cap). Each bar rebalances
+                toward it, so fractional and changing weights scale a position in
+                and out over time, not just flip it fully on/off.
             cash: Starting cash of the simulated account, in CNY. Caps how much can
                 actually be bought regardless of target weights.
             costs: A-share cost model (commission, sell-side stamp tax, slippage)
@@ -158,12 +167,15 @@ class EventDrivenBacktest:
             row_map: dict[datetime, tuple[float, float, float, float]] = {}
             for row in bars.iter_rows(named=True):
                 signal = row["signal"]
+                # null (first bar / warm-up) or NaN (a strategy dividing through an
+                # undefined indicator) → treat as flat, so sizing never sees a NaN.
+                if signal is None or math.isnan(signal):
+                    signal = 0.0
                 row_map[row["timestamp"]] = (
                     float(row["open"]),
                     float(row["close"]),
                     float(row["volume"]),
-                    # signal is null on the first bar (and during warm-up) → flat
-                    0.0 if signal is None else float(signal),
+                    float(signal),
                 )
             bars_by_symbol[symbol] = row_map
             timestamps.update(row_map)  # collect this symbol's timestamps
@@ -227,11 +239,13 @@ class EventDrivenBacktest:
                         Order(symbol, Side.SELL, qty, price, reason="stop_loss")
                     )
 
-            # 2) Signal-driven entries/exits, only for symbols trading right now.
-            #    Entries/exits fill at THIS bar's OPEN, driven by `signal` — the
-            #    target lagged one bar (i.e. decided on the previous bar's close).
-            #    That is the t+1-open convention, so no trade ever uses the close
-            #    that produced its own signal.
+            # 2) Rebalance each symbol toward its TARGET WEIGHT. `signal` is the
+            #    strategy's desired weight (lagged one bar): the fraction of equity
+            #    to hold in this name, not a 0/1 in-or-out flag. We turn it into a
+            #    target share count and trade only the *difference* vs what we hold
+            #    — so a rising target scales IN over several bars and a falling one
+            #    scales OUT, trading the same name repeatedly. Fills are at THIS
+            #    bar's OPEN (t+1-open), so no trade uses the close that set it.
             for symbol, row_map in bars_by_symbol.items():
                 # Skip symbols with no bar at this timestamp, or just stopped out.
                 if ts not in row_map or symbol in stopped:
@@ -239,33 +253,45 @@ class EventDrivenBacktest:
                 open_px, _close, volume, signal = row_map[ts]
                 prev_close = prev_ref_close.get(symbol)
                 held = broker.shares(symbol)  # shares currently held (0 if none)
-                if signal > 0 and held == 0 and risk.can_trade():
-                    # Want long, currently flat, allowed → size a buy within
-                    # per-name / gross / cash limits, then cap it at the bar's
-                    # participation volume, and skip if 停牌/涨停 blocks the buy.
-                    shares = risk.max_buy_shares(symbol, open_px, equity, broker)
+                # Target weight: clamp the signal to [0, per-name cap] (A-share is
+                # long/flat; never exceed the risk cap), convert to a lot-aligned
+                # share target against current equity, and trade only the delta.
+                weight = min(max(signal, 0.0), risk.limits.max_position_weight)
+                desired = self._target_shares(weight, equity, open_px)
+                delta = desired - held  # >0 buy more, <0 sell some, 0 already there
+                if delta > 0 and risk.can_trade():
+                    # Scale IN: buy the shortfall, but no more than cash/gross/cap
+                    # room and the bar's participation volume, and only if the buy
+                    # isn't blocked by 停牌/涨停. (New buys are blocked when halted.)
+                    buyable = min(
+                        delta, risk.max_buy_shares(symbol, open_px, equity, broker)
+                    )
                     cap = self._volume_cap(volume)
                     if cap is not None:
-                        shares = min(shares, cap)
-                    if shares > 0 and self._tradable(
+                        buyable = min(buyable, cap)
+                    if buyable > 0 and self._tradable(
                         symbol, Side.BUY, open_px, volume, prev_close
                     ):
                         fill = broker.place_order(
-                            Order(symbol, Side.BUY, shares, open_px, reason="signal")
+                            Order(
+                                symbol, Side.BUY, buyable, open_px, reason="rebalance"
+                            )
                         )
                         if fill is not None:  # record T+1: these can't sell today
                             bought_today[symbol] = (
                                 bought_today.get(symbol, 0) + fill.shares
                             )
-                elif signal <= 0 and held > 0:
-                    # Want flat but currently long → sell what T+1 / the volume cap
-                    # allow, if 停牌/跌停 doesn't block it. Unsold shares roll over.
-                    qty = self._exitable(held, symbol, bought_today, volume)
+                elif delta < 0:
+                    # Scale OUT: sell the excess (-delta), capped by T+1-sellable
+                    # shares and the volume cap, if 停牌/跌停 doesn't block it.
+                    # (Exits are allowed even when halted.) Unsold excess rolls over.
+                    sellable = self._exitable(held, symbol, bought_today, volume)
+                    qty = min(-delta, sellable)
                     if qty > 0 and self._tradable(
                         symbol, Side.SELL, open_px, volume, prev_close
                     ):
                         broker.place_order(
-                            Order(symbol, Side.SELL, qty, open_px, reason="signal_exit")
+                            Order(symbol, Side.SELL, qty, open_px, reason="rebalance")
                         )
 
             # Record the post-trade equity + cash for this timestamp; this list
@@ -311,6 +337,19 @@ class EventDrivenBacktest:
             pos.shares * prices.get(sym, pos.avg_price)
             for sym, pos in broker.positions().items()
         )
+
+    def _target_shares(self, weight: float, equity: float, price: float) -> int:
+        """Lot-aligned share count for holding ``weight`` of ``equity`` at ``price``.
+
+        ``weight`` is a fraction of equity (already clamped to ``[0, per-name cap]``).
+        Rounds to the **nearest** whole board lot — the ±half-lot tolerance is a
+        deadband that stops a steady target from churning a lot back and forth as
+        equity wobbles across a boundary each bar. (Buys are still hard-capped by
+        ``max_buy_shares``, so rounding up can never breach the per-name cap.)
+        """
+        if price <= 0 or weight <= 0:
+            return 0
+        return int(weight * equity / price / self._lot + 0.5) * self._lot
 
     def _volume_cap(self, volume: float) -> int | None:
         """Max lot-aligned shares one order may take this bar (participation cap).

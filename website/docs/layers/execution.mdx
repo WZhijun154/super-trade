@@ -56,6 +56,20 @@ engine.scan_once()              # one pass
 engine.run(interval_seconds=10) # scan every 10s (blocks; Ctrl-C to stop)
 ```
 
+### Target-weight rebalancing
+
+A strategy's `signal` is a **target weight** — the *fraction of equity* to hold in a
+name, not a 0/1 in-or-out flag. Each bar the event-driven engine sizes the desired
+position (`weight × equity / price`, clamped to the per-name cap, rounded to whole
+lots) and trades only the **difference** vs what it already holds. So a *changing*
+target **scales a position in and out over many bars** — the same name is bought and
+sold repeatedly — instead of flipping fully on/off.
+
+`ScaledRsiReversion` shows this: it ramps the weight from 0 (RSI ≥ high) to 1.0
+(RSI ≤ low), so the engine accumulates as the name gets more oversold and trims as it
+recovers. The ±half-lot rounding is a deadband that keeps a steady target from
+churning a lot back and forth each bar.
+
 ## Risk management
 
 `RiskManager` is the **safety layer between a strategy's signal and an actual

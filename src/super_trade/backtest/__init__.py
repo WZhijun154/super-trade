@@ -18,7 +18,7 @@ from __future__ import annotations
 from .costs import NO_COSTS, CostModel
 from .engine import VectorizedEngine, run_backtest
 from .result import BacktestResult
-from .strategies import BuyAndHold, RsiReversion, SmaCross
+from .strategies import BuyAndHold, RsiReversion, ScaledRsiReversion, SmaCross
 from .strategy import Strategy
 
 __all__ = [
@@ -27,6 +27,7 @@ __all__ = [
     "BuyAndHold",
     "CostModel",
     "RsiReversion",
+    "ScaledRsiReversion",
     "SmaCross",
     "Strategy",
     "VectorizedEngine",
