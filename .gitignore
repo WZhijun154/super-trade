@@ -16,3 +16,6 @@ wheels/
 .claude/scheduled_tasks.lock
 .claude/scheduled_tasks.json
 .claude/settings.local.json
+
+# Generated backtest equity-curve HTML artifacts
+*_equity.html

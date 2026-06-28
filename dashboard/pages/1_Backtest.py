@@ -1,8 +1,9 @@
 """Backtest page — run a strategy and view its equity, drawdown, and stats.
 
-Thin presentation over the backtest/execution engines: pick a symbol + strategy,
-choose the vectorized engine (fast) or the event-driven one (path-dependent
-stop-loss, real cash/lots), and render the result via ``viz``.
+Thin presentation over the backtest/execution engines: pick a symbol, interval, and
+strategy, choose the vectorized engine (fast) or the event-driven one (path-dependent
+stop-loss, real cash/lots), and render the result via ``viz``. Intraday intervals are
+resampled from stored 1-minute bars.
 """
 
 from __future__ import annotations
@@ -16,7 +17,7 @@ from super_trade.backtest import (
     SmaCross,
     VectorizedEngine,
 )
-from super_trade.data import ClickHouseConfig, ClickHouseStore, Interval
+from super_trade.data import ClickHouseConfig, ClickHouseStore, Interval, load_bars
 from super_trade.execution import EventDrivenBacktest, RiskLimits, RiskManager
 
 st.set_page_config(page_title="super-trade · backtest", layout="wide")
@@ -33,13 +34,20 @@ sb = st.sidebar
 database = sb.text_input("ClickHouse database", value="super_trade_sandbox")
 store = get_store(database)
 
+# Interval first — intraday intervals are derived from stored 1-minute bars.
+interval = Interval(sb.selectbox("Interval", [i.value for i in Interval], index=5))
+base = Interval.MINUTE if interval.is_intraday else None
+
 try:
-    symbols = store.list_symbols()
-except Exception as exc:
+    symbols = store.list_symbols(base or interval)
+except Exception as exc:  # surface connection errors in the UI
     st.error(f"Could not reach ClickHouse / database '{database}': {exc}")
     st.stop()
 if not symbols:
-    st.warning(f"No symbols in '{database}'.")
+    st.warning(
+        f"No symbols at {(base or interval).value} in '{database}'. "
+        "Seed the sandbox (scripts/seed_sandbox.py [minute]) or backfill."
+    )
     st.stop()
 
 symbol = sb.selectbox("Symbol", symbols)
@@ -65,9 +73,9 @@ engine_kind = sb.radio(
     "Type", ["Vectorized (fast)", "Event-driven (stop-loss, real lots)"]
 )
 
-df = store.read_bars(symbol, Interval.DAY)
+df = load_bars(store, symbol, interval, resample_from=base)
 if df.height == 0:
-    st.warning(f"No bars stored for {symbol}.")
+    st.warning(f"No bars for {symbol} at {interval.value}.")
     st.stop()
 
 if engine_kind.startswith("Vectorized"):
@@ -80,12 +88,14 @@ else:
         strategy,
         cash=cash,
         universe=[symbol],
+        interval=interval,
+        resample_from=base,
         risk=RiskManager(RiskLimits(stop_loss=stop)),
     ).run()
 
 # --- results ---
 stats = result.stats()
-st.subheader(f"{symbol} — {result.strategy_name}")
+st.subheader(f"{symbol} · {interval.value} — {result.strategy_name}")
 c1, c2, c3, c4, c5 = st.columns(5)
 c1.metric("Total return", f"{stats['total_return']:.1%}")
 c2.metric("CAGR", f"{stats['cagr']:.1%}")

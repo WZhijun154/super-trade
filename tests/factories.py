@@ -16,6 +16,7 @@ _INTERVAL_DELTA: dict[Interval, timedelta] = {
     Interval.MINUTE: timedelta(minutes=1),
     Interval.FIVE_MINUTE: timedelta(minutes=5),
     Interval.FIFTEEN_MINUTE: timedelta(minutes=15),
+    Interval.THIRTY_MINUTE: timedelta(minutes=30),
     Interval.HOUR: timedelta(hours=1),
     Interval.DAY: timedelta(days=1),
 }

@@ -15,13 +15,35 @@ from pydantic import BaseModel, ConfigDict, model_validator
 
 
 class Interval(StrEnum):
-    """Bar aggregation interval. The string value is what is persisted."""
+    """Bar aggregation interval. The string value is what is persisted.
+
+    1-minute is the finest grain; coarser intervals are derived by resampling
+    (see :func:`super_trade.data.resample.resample`).
+    """
 
     MINUTE = "1m"
     FIVE_MINUTE = "5m"
     FIFTEEN_MINUTE = "15m"
+    THIRTY_MINUTE = "30m"
     HOUR = "1h"
     DAY = "1d"
+
+    @property
+    def minutes(self) -> int:
+        """Length of one bar in minutes (``1d`` = a full 1440-minute day)."""
+        return {
+            Interval.MINUTE: 1,
+            Interval.FIVE_MINUTE: 5,
+            Interval.FIFTEEN_MINUTE: 15,
+            Interval.THIRTY_MINUTE: 30,
+            Interval.HOUR: 60,
+            Interval.DAY: 1440,
+        }[self]
+
+    @property
+    def is_intraday(self) -> bool:
+        """True for everything finer than a daily bar."""
+        return self is not Interval.DAY
 
 
 class Bar(BaseModel):

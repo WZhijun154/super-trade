@@ -33,6 +33,7 @@ _QMT_PERIOD: dict[Interval, str] = {
     Interval.MINUTE: "1m",
     Interval.FIVE_MINUTE: "5m",
     Interval.FIFTEEN_MINUTE: "15m",
+    Interval.THIRTY_MINUTE: "30m",
     Interval.HOUR: "1h",
     Interval.DAY: "1d",
 }
