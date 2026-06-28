@@ -45,6 +45,51 @@ def test_event_driven_runs_and_reports() -> None:
     assert {"total_return", "sharpe", "max_drawdown", "calmar"} <= set(stats)
 
 
+def test_entry_lags_one_bar_and_fills_at_open() -> None:
+    # Bars with open != close so the fill venue is observable. Bar 1 is a big up
+    # bar (opens 100, closes 200); BuyAndHold wants in from bar 0's close.
+    store = FakeStore()
+    start = datetime(2024, 1, 1, tzinfo=UTC)
+    ohlc = [
+        (100.0, 100.0, 100.0, 100.0),  # bar 0
+        (100.0, 200.0, 100.0, 200.0),  # bar 1: open 100 -> close 200
+        (200.0, 200.0, 200.0, 200.0),  # bar 2
+    ]
+    store.write_bars(
+        [
+            Bar(
+                symbol="AAA",
+                interval=Interval.DAY,
+                timestamp=start + timedelta(days=i),
+                open=o,
+                high=h,
+                low=low,
+                close=c,
+                volume=1000,
+            )
+            for i, (o, h, low, c) in enumerate(ohlc)
+        ]
+    )
+    result = EventDrivenBacktest(
+        store,
+        BuyAndHold(),
+        cash=100_000,
+        universe=["AAA"],
+        risk=RiskManager(RiskLimits(max_daily_loss=0.99)),
+    ).run()
+    eq = result.data["equity"].to_list()
+    cash = result.data["cash"].to_list()
+
+    # One-bar lag: BuyAndHold's bar-0 target is shifted out, so nothing trades on
+    # bar 0 and equity is exactly the starting cash.
+    assert eq[0] == 100_000
+    # The entry executes on bar 1 (cash falls), filling at the OPEN (100). Marking
+    # to bar 1's close (200) then shows a gain — a same-bar close fill (200) would
+    # leave equity at starting cash minus costs instead.
+    assert cash[1] < cash[0]
+    assert eq[1] > eq[0]
+
+
 def test_stop_loss_preserves_capital_on_crash() -> None:
     # rises a touch, then crashes hard and stays low
     closes = [100.0, 100.0, 94.0, 60.0, 60.0, 60.0]

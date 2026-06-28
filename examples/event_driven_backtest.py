@@ -1,19 +1,23 @@
-"""Event-driven backtest example.
+"""Event-driven backtest example — on **1-minute** bars.
 
 Replays history bar-by-bar through the execution layer's SimBroker + RiskManager,
 so it models path-dependent behaviour the vectorized engine can't — notably the
-**stop-loss** — plus real cash, integer 手/lots, and per-name sizing.
+**stop-loss** — plus real cash, integer 手/lots, and per-name sizing. Here the
+simulation clock ticks once per *minute* (A-share sessions 09:30-11:30 / 13:00-15:00).
 
 Compare this with `vectorized_backtest.py`: same strategies, same data, different
 engine. The event-driven numbers differ because they reflect real share lots, a
 cash budget, per-name position caps, and an 8% stop-loss.
 
+Prerequisite — seed 1-minute sandbox data once:
+    uv run python scripts/seed_sandbox.py minute
+
 Run:
     uv run python examples/event_driven_backtest.py [SYMBOL] [DATABASE] [INTERVAL]
 
-Defaults to FAKE003, daily, in super_trade_sandbox. INTERVAL is one of
-1m/5m/15m/30m/1h/1d; intraday intervals are resampled from stored 1-minute bars
-(seed them with `python scripts/seed_sandbox.py minute`).
+Defaults to FAKE001 at 1m in super_trade_sandbox. INTERVAL is one of
+1m/5m/15m/30m/1h/1d; any intraday interval is resampled from the stored 1-minute
+bars on read, so the same minute data backs every granularity.
 """
 
 from __future__ import annotations
@@ -26,16 +30,19 @@ from super_trade.execution import EventDrivenBacktest, RiskLimits, RiskManager
 
 
 def main() -> None:
-    symbol = sys.argv[1] if len(sys.argv) > 1 else "FAKE003"
+    symbol = sys.argv[1] if len(sys.argv) > 1 else "FAKE001"
     database = sys.argv[2] if len(sys.argv) > 2 else "super_trade_sandbox"
-    interval = Interval(sys.argv[3]) if len(sys.argv) > 3 else Interval.DAY
-    # Intraday intervals are derived from stored 1-minute bars by resampling.
+    interval = Interval(sys.argv[3]) if len(sys.argv) > 3 else Interval.MINUTE
+    # 1-minute is stored directly; coarser intraday intervals resample from it.
     base = Interval.MINUTE if interval.is_intraday else None
     cash = 1_000_000.0
 
     with ClickHouseStore(ClickHouseConfig(database=database)) as store:
         if load_bars(store, symbol, interval, resample_from=base).height == 0:
-            print(f"No bars for {symbol} in {database}. Seed the sandbox or backfill.")
+            print(
+                f"No 1-minute bars for {symbol} in {database}. "
+                "Seed them first: uv run python scripts/seed_sandbox.py minute"
+            )
             return
 
         print(
