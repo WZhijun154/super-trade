@@ -1,0 +1,94 @@
+---
+title: 选股与配置
+---
+
+# 选股与配置 — `super_trade.selection` / `super_trade.portfolio`
+
+位于单标的策略之上的**横截面（cross-sectional）**层。策略决定*何时*持有某只股票；这一层
+决定持有*哪些*股票、以及*各持多少*：
+
+```
+选股（哪些）  →  配置（各多少）  →  信号 → 定量 → 执行
+```
+
+## 为什么需要它
+
+散户量化者的结构性优势，是去机构/量化资金**到不了**的地方淘金——小市值、低流动性、覆盖少的
+名字，那里由散户定价、行为性错误定价得以存留。你*正因为体量小*才能在那里交易。选股层把
+“量化资金更少的角落”变成可度量、可组合的筛选条件。
+
+## 特征 —— 每只股票一行
+
+`build_features(store, symbols, *, asof=None, lookback=60, fundamentals=None)` 构建一个
+横截面：每个候选标的一行、列为可比较的特征，且都**截至同一时刻**度量（因果——绝不使用未来
+数据）。OHLCV 派生列由 store 真实计算：
+
+- **`adv`** —— 日均成交额（`close × volume`）：流动性 / “能容纳多少量化资金”的代理。`adv`
+  越低 ≈ 越不流动 ≈ 越是散户地盘。
+- **`volatility`**、**`momentum`**、**`price`**、**`bars`**。
+
+调用方提供的 `fundamentals` 帧（`float_mktcap`、`inst_ownership`、`is_st`、
+`is_index_member` ……）按 `symbol` 左连接进来。这些数据**假定已存在**——填充它们的数据接入
+是后续工作；下游只管读取这些列。
+
+## 可组合的过滤器与打分器
+
+选股 = **过滤 + 排序**，两者都可组合——一种筛选“方法”是若干小积木的*组合*，而非一个写死的
+函数。
+
+- **`Filter`** → 一个布尔 `pl.Expr`；用 `&` `|` `~` 组合。积木：`Range(col, low, high)`、
+  `AtLeast`、`AtMost`、`Flag(col, equals)`。
+- **`Scorer`** → 一个偏好 `pl.Expr`（越高越好）；用 `*`（加权）与 `+`（求和）混合。用
+  `Rank(col, ascending)`——归一化到 `[0,1]` 的排名——使不同量纲的特征加权混合时公平可比。
+
+**散户池（retail-pond）**只是其中一种配置：
+
+```python
+from super_trade.selection import build_features, Selector, Range, AtMost, Flag, Rank
+
+feats = build_features(store, fundamentals=fundamentals)
+pond = Selector(
+    filters=[
+        Range("float_mktcap", high=10e9),   # 小流通市值
+        Range("adv", low=5e6, high=1e8),     # 可交易，但又没大到量化扎堆
+        AtMost("inst_ownership", 0.20),      # 低机构持股
+        ~Flag("is_st"),                       # 剔除 ST / *ST
+    ],
+    score=Rank("inst_ownership", ascending=True)   # 先看“量化更不拥挤”…
+    + Rank("momentum", ascending=False),           # …再看近期强度
+    top_n=20,
+)
+universe = pond.select(feats)   # list[str] → EventDrivenBacktest(universe=…)
+```
+
+把过滤器/打分器换成任意其它方法（低波动、动量、价值……）即可——`Selector` 本身与方法无关，
+其输出原样喂给 `universe=`。
+
+## 配置 —— 各持多少
+
+`super_trade.portfolio` 把选中的名字转成目标**权重**——`{symbol: 权益占比}`，总和 ≤ `gross`，
+每个 ≤ `max_weight`：
+
+```python
+from super_trade.portfolio import InverseVol
+
+weights = InverseVol(gross=0.9, max_weight=0.2).weights(picks)
+EventDrivenBacktest(store, strategy, universe=universe, weights=weights).run()
+```
+
+引擎把策略信号当作**择时**、把配置当作**预算**：每根 bar 的目标 = `信号 × 权重`。即策略说
+*此刻是否*持有某名字，配置则限制它*最多*占组合多少。
+
+:::tip[刚接触配置？从简单开始]
+先用 **`EqualWeight`**，再升级到 **`InverseVol`**（按 `1/波动率` 定量，使某只暴躁的小盘股
+无法主导组合风险）。两者都稳健、且无需收益预测。**早期别碰均值-方差优化**——它的估计误差通常
+比收益还大。配置是*较小*的杠杆；选股与风控更重要。
+:::
+
+## 诚实的局限
+
+- **基本面是假定的，尚未接入。** `adv`/`volatility`/`momentum` 是真实的；
+  `float_mktcap`/`inst_ownership`/… 取决于你传入的帧。
+- **小盘股的幸存者偏差很严重。** 仅用*如今仍存活*的小盘股回测会严重高估收益——必须把**已退市**
+  的名字纳入数据，否则结果偏乐观。
+- **静态，非周期性。** 本版只选/配一次。在回测循环内周期性地重选、重配是后续工作。

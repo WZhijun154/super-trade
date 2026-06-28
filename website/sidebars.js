@@ -17,6 +17,7 @@ const sidebars = {
         'layers/metrics',
         'layers/backtest',
         'layers/execution',
+        'layers/selection',
         'layers/viz',
       ],
     },

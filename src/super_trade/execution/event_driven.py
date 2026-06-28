@@ -83,6 +83,7 @@ class EventDrivenBacktest:
         interval: Interval = Interval.DAY,
         resample_from: Interval | None = None,
         rules: MarketRules | None = None,
+        weights: dict[str, float] | None = None,
     ) -> None:
         """Configure a run (nothing is read or simulated until ``run()``).
 
@@ -109,6 +110,10 @@ class EventDrivenBacktest:
             rules: A-share market realism (T+1, price limits, suspension, partial
                 fills). Defaults to ``MarketRules()`` (all on). Pass a relaxed one to
                 disable any of them.
+            weights: Optional portfolio **budget** per symbol (e.g. from an
+                ``Allocator``). The per-bar target becomes ``signal * weight`` — the
+                strategy times each name, the weight caps its share of the book.
+                ``None`` (or a missing symbol) → weight 1.0 = signal used as-is.
         """
         self._store = store
         self._strategy = strategy
@@ -116,6 +121,7 @@ class EventDrivenBacktest:
         self._costs = costs or CostModel()
         self._risk = risk or RiskManager()
         self._rules = rules or MarketRules()
+        self._weights = weights or {}  # per-name portfolio budget (default 1.0 each)
         self._lot = LOT_SIZE  # board lot (100 shares); fills round down to this
         self._universe = universe
         self._interval = interval
@@ -253,10 +259,12 @@ class EventDrivenBacktest:
                 open_px, _close, volume, signal = row_map[ts]
                 prev_close = prev_ref_close.get(symbol)
                 held = broker.shares(symbol)  # shares currently held (0 if none)
-                # Target weight: clamp the signal to [0, per-name cap] (A-share is
-                # long/flat; never exceed the risk cap), convert to a lot-aligned
-                # share target against current equity, and trade only the delta.
-                weight = min(max(signal, 0.0), risk.limits.max_position_weight)
+                # Target weight = signal (timing) * portfolio budget (allocation),
+                # then clamped to [0, per-name cap]. With no `weights` the budget is
+                # 1.0, so the target is just the clamped signal. Convert to a
+                # lot-aligned share target against equity and trade only the delta.
+                budget = self._weights.get(symbol, 1.0)
+                weight = min(max(signal * budget, 0.0), risk.limits.max_position_weight)
                 desired = self._target_shares(weight, equity, open_px)
                 delta = desired - held  # >0 buy more, <0 sell some, 0 already there
                 if delta > 0 and risk.can_trade():

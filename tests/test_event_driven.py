@@ -166,6 +166,32 @@ def test_fractional_target_weight_sizes_partial() -> None:
     assert 49_000 < cash[-1] < 51_000
 
 
+def test_allocation_weight_scales_the_budget() -> None:
+    # The `weights` hook multiplies the signal by a portfolio budget: a full-signal
+    # name with weight 0.5 holds ~half what it would with weight 1.0 (default).
+    store = _flat_store("AAA", n=4)
+    full = EventDrivenBacktest(
+        store,
+        _ConstantWeight(1.0),
+        cash=100_000,
+        universe=["AAA"],
+        risk=RiskManager(_WIDE),
+    ).run()
+    half = EventDrivenBacktest(
+        store,
+        _ConstantWeight(1.0),
+        cash=100_000,
+        universe=["AAA"],
+        risk=RiskManager(_WIDE),
+        weights={"AAA": 0.5},
+    ).run()
+    cash_full = full.data["cash"].to_list()[-1]
+    cash_half = half.data["cash"].to_list()[-1]
+    # full → ~95% invested (cap), half → ~50% invested → much more cash left
+    assert cash_half > cash_full
+    assert 45_000 < cash_half < 55_000
+
+
 def test_target_weight_scales_in_and_out() -> None:
     # A rising-then-falling target makes the engine BUY the same name in tranches
     # and then SELL it down in tranches — multiple trades per name, the real-world

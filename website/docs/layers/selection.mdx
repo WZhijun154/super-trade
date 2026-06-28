@@ -1,0 +1,102 @@
+---
+title: Selection & allocation
+---
+
+# Selection & allocation — `super_trade.selection` / `super_trade.portfolio`
+
+A **cross-sectional** layer above the per-symbol strategy. The strategy decides *when*
+to be in a name; this layer decides *which* names and *how much* of each:
+
+```
+select (which names)  →  allocate (how much each)  →  signal → size → execute
+```
+
+## Why this exists
+
+A retail quant's structural edge is to fish where institutional/quant capital can't
+go — small, illiquid, low-coverage names where 散户 set the price and behavioral
+mispricing survives. You can trade there *because* you're small. The selection layer
+makes "where the quants aren't" a measurable, composable filter.
+
+## Features — one row per symbol
+
+`build_features(store, symbols, *, asof=None, lookback=60, fundamentals=None)` builds a
+cross-section: a DataFrame with one row per candidate and comparable columns, measured
+**as of one moment** (causal — never the future). OHLCV-derived columns are computed
+for real from the store:
+
+- **`adv`** — average daily 成交额 (`close × volume`): the liquidity / "how much quant
+  capital fits" proxy. Low `adv` ≈ illiquid ≈ retail turf.
+- **`volatility`**, **`momentum`**, **`price`**, **`bars`**.
+
+A caller-supplied `fundamentals` frame (`float_mktcap`, `inst_ownership`, `is_st`,
+`is_index_member`, …) is left-joined on `symbol`. Those are **assumed available** — the
+ingestion that fills them is future work; everything downstream just reads the columns.
+
+## Composable filters & scorers
+
+Selection is **filter + rank**, and both compose — a screening "method" is a
+*combination* of small pieces, not a bespoke function.
+
+- **`Filter`** → a boolean `pl.Expr`; combine with `&` `|` `~`. Building blocks:
+  `Range(col, low, high)`, `AtLeast`, `AtMost`, `Flag(col, equals)`.
+- **`Scorer`** → a preference `pl.Expr` (higher = better); blend with `*` (weight) and
+  `+` (sum). Use `Rank(col, ascending)` — a normalised `[0,1]` rank — so weighted
+  blends are fair across features of wildly different scale.
+
+The **retail-pond** universe is just one configuration:
+
+```python
+from super_trade.selection import build_features, Selector, Range, AtMost, Flag, Rank
+
+feats = build_features(store, fundamentals=fundamentals)
+pond = Selector(
+    filters=[
+        Range("float_mktcap", high=10e9),   # small float cap
+        Range("adv", low=5e6, high=1e8),     # tradeable, but not quant-sized
+        AtMost("inst_ownership", 0.20),      # low institutional ownership
+        ~Flag("is_st"),                       # drop ST / *ST
+    ],
+    score=Rank("inst_ownership", ascending=True)   # less quant-crowded first…
+    + Rank("momentum", ascending=False),           # …then recent strength
+    top_n=20,
+)
+universe = pond.select(feats)   # list[str] → EventDrivenBacktest(universe=…)
+```
+
+Swap the filters/scorer for any other method (low-vol, momentum, value, …) — the
+`Selector` itself is method-agnostic, and its output feeds `universe=` unchanged.
+
+## Allocation — how much of each
+
+`super_trade.portfolio` turns the selected names into target **weights** —
+`{symbol: fraction-of-equity}` summing to ≤ `gross`, each ≤ `max_weight`:
+
+```python
+from super_trade.portfolio import InverseVol
+
+weights = InverseVol(gross=0.9, max_weight=0.2).weights(picks)
+EventDrivenBacktest(store, strategy, universe=universe, weights=weights).run()
+```
+
+The engine treats the strategy signal as **timing** and the allocation as **budget**:
+the per-bar target is `signal × weight`. So the strategy says *whether* to hold a name
+right now; the allocator caps *how much* of the book it can take.
+
+:::tip[New to allocation? Start simple]
+Use **`EqualWeight`** first, graduate to **`InverseVol`** (size by `1/volatility`, so
+one jumpy small-cap can't dominate portfolio risk). Both are robust and need no return
+forecast. **Skip mean-variance optimisation early** — its estimation error usually
+costs more than it gains. Allocation is the *smaller* lever; selection and risk control
+matter more.
+:::
+
+## Honest limitations
+
+- **Fundamentals are assumed, not yet ingested.** `adv`/`volatility`/`momentum` are
+  real; `float_mktcap`/`inst_ownership`/… come from whatever frame you pass.
+- **Survivorship bias is severe for small-caps.** A backtest on *today's* surviving
+  small names overstates returns badly — you must include **delisted** names, or read
+  the results as optimistic.
+- **Static, not periodic.** This cut selects/allocates once. Periodic re-selection and
+  re-allocation inside the backtest loop is future work.
