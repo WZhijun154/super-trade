@@ -7,6 +7,8 @@ board-lot sizing, and the same A-share costs as the vectorized backtester
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from super_trade.backtest.costs import CostModel
 
 from .broker import LOT_SIZE, Account, Broker, Fill, Order, Position, Side
@@ -70,6 +72,11 @@ class SimBroker(Broker):
         self._costs = costs or CostModel()
         self._lot = lot_size
         self.fills: list[Fill] = []
+        self._clock: datetime | None = None  # stamped onto fills, set per bar
+
+    def set_time(self, ts: datetime) -> None:
+        """Set the timestamp stamped onto subsequent fills (the backtest clock)."""
+        self._clock = ts
 
     @property
     def account(self) -> Account:
@@ -133,6 +140,7 @@ class SimBroker(Broker):
             price=order.price,
             cost=cost,
             reason=order.reason,
+            timestamp=self._clock,
         )
         self.fills.append(fill)
         return fill

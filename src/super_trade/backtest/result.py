@@ -20,10 +20,18 @@ if TYPE_CHECKING:
 
 @dataclass
 class BacktestResult:
-    """Output of a vectorized backtest run."""
+    """Output of a backtest run.
+
+    ``data`` is the per-bar equity frame (always present). The event-driven engine
+    additionally fills ``fills`` (one row per executed trade) and ``positions`` (a
+    per-bar snapshot of open holdings) — the telemetry the Foxglove MCAP exporter
+    streams. The vectorized engine leaves both ``None``.
+    """
 
     data: pl.DataFrame
     strategy_name: str = "strategy"
+    fills: pl.DataFrame | None = None
+    positions: pl.DataFrame | None = None
 
     def stats(self) -> dict[str, float]:
         """Risk/return summary, computed on the equity curve."""

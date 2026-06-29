@@ -213,8 +213,11 @@ class EventDrivenBacktest:
         # Periodic-rebalance state: index into self._schedule + the active budgets.
         sched_idx = -1
         active_budget: dict[str, float] = {}
+        # Telemetry: per-bar snapshot of open positions (for the Foxglove exporter).
+        position_rows: list[dict] = []
 
         for ts in timeline:
+            broker.set_time(ts)  # stamp this bar's fills with its timestamp
             # Risk limits, the T+1 ledger and the limit reference are per *day*.
             # When the calendar day changes: snapshot yesterday's closes as the
             # limit reference, clear today's T+1 ledger, and reset the risk
@@ -363,17 +366,57 @@ class EventDrivenBacktest:
                     "cash": broker.cash(),
                 }
             )
+            # Telemetry: snapshot each open position at this bar (Foxglove export).
+            for sym, pos in broker.positions().items():
+                price = last_price.get(sym, pos.avg_price)
+                position_rows.append(
+                    {
+                        "timestamp": ts,
+                        "symbol": sym,
+                        "shares": pos.shares,
+                        "avg_price": pos.avg_price,
+                        "price": price,
+                        "market_value": pos.shares * price,
+                        "unrealized_pnl": pos.shares * (price - pos.avg_price),
+                    }
+                )
 
         # ---- Phase 3: assemble the result -------------------------------------
         # Turn the per-bar snapshots into a DataFrame and wrap it in a
         # BacktestResult, which computes stats (via metrics.summary on `equity`)
         # and charts (via viz) — the same API the vectorized engine returns.
+        # `fills` and `positions` carry the per-trade / per-bar telemetry the
+        # Foxglove MCAP exporter streams.
         data = pl.DataFrame(
             equity_rows,
             schema={"timestamp": pl.Datetime, "equity": pl.Float64, "cash": pl.Float64},
         )
         return BacktestResult(
-            data, strategy_name=f"{self._strategy.name} (event-driven)"
+            data,
+            strategy_name=f"{self._strategy.name} (event-driven)",
+            fills=self._fills_frame(broker),
+            positions=pl.DataFrame(position_rows) if position_rows else None,
+        )
+
+    @staticmethod
+    def _fills_frame(broker: SimBroker) -> pl.DataFrame | None:
+        """Broker fills as a DataFrame (timestamp, symbol, side, shares, …)."""
+        if not broker.fills:
+            return None
+        return pl.DataFrame(
+            [
+                {
+                    "timestamp": f.timestamp,
+                    "symbol": f.symbol,
+                    "side": str(f.side),
+                    "shares": f.shares,
+                    "price": f.price,
+                    "cost": f.cost,
+                    "notional": f.shares * f.price,
+                    "reason": f.reason,
+                }
+                for f in broker.fills
+            ]
         )
 
     @staticmethod

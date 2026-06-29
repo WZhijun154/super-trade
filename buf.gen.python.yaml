@@ -1,0 +1,11 @@
+# Generate Python protobuf bindings for the Foxglove MCAP exporter from the shared
+# schema in the sibling foxglove-trade repo. Regenerate with:
+#   buf generate ../foxglove-trade/proto --template buf.gen.python.yaml
+# The output under src/super_trade/foxglove/_proto/ is committed, so this repo does
+# not need foxglove-trade present at runtime.
+version: v2
+plugins:
+  - remote: buf.build/protocolbuffers/python:v31.1
+    out: src/super_trade/foxglove/_proto
+  - remote: buf.build/protocolbuffers/pyi:v31.1
+    out: src/super_trade/foxglove/_proto
