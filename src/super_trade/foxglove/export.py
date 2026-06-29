@@ -90,6 +90,23 @@ def export_mcap(result: BacktestResult, path: str | Path) -> Path:
                     topic="/portfolio", message=msg, log_time=ns, publish_time=ns
                 )
 
+        # --- /bars (OHLCV, for the candlestick panel) ---
+        if result.bars is not None and result.bars.height > 0:
+            for row in result.bars.iter_rows(named=True):
+                ns = _to_ns(row["timestamp"])
+                msg = pb.Bar(
+                    symbol=row["symbol"],
+                    open=float(row["open"]),
+                    high=float(row["high"]),
+                    low=float(row["low"]),
+                    close=float(row["close"]),
+                    volume=float(row["volume"]),
+                )
+                msg.time.FromNanoseconds(ns)
+                writer.write_message(
+                    topic="/bars", message=msg, log_time=ns, publish_time=ns
+                )
+
         # --- /fills ---
         if result.fills is not None and result.fills.height > 0:
             for row in result.fills.iter_rows(named=True):

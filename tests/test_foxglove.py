@@ -38,8 +38,9 @@ def test_event_driven_export_has_all_topics(tmp_path: Path) -> None:
     assert out.exists() and out.stat().st_size > 0
 
     counts = _topic_counts(out)
-    # one Equity per bar; Portfolio/Fill present once the strategy is invested
+    # one Equity per bar; Bar/Portfolio/Fill present once the strategy is invested
     assert counts["/equity"] == result.data.height
+    assert counts["/bars"] == result.bars.height
     assert counts["/portfolio"] == result.positions.height
     assert counts["/fills"] == result.fills.height
 

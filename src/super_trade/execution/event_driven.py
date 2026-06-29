@@ -167,6 +167,8 @@ class EventDrivenBacktest:
         ] = {}
         # The union of every symbol's bar timestamps becomes the simulation clock.
         timestamps: set[datetime] = set()
+        # OHLCV per symbol, kept for the Foxglove candlestick (/bars) export.
+        bar_frames: list[pl.DataFrame] = []
         for symbol in universe:
             bars = load_bars(
                 self._store,
@@ -178,6 +180,11 @@ class EventDrivenBacktest:
             )
             if bars.height == 0:
                 continue  # no data for this symbol in the window — skip it
+            bar_frames.append(
+                bars.select(
+                    "symbol", "timestamp", "open", "high", "low", "close", "volume"
+                )
+            )
             # Target weight alongside OHLCV, then lag it one bar so this bar acts
             # on the *previous* bar's decision (executed at this bar's open).
             bars = bars.with_columns(self._strategy.positions().alias("target"))
@@ -396,6 +403,7 @@ class EventDrivenBacktest:
             strategy_name=f"{self._strategy.name} (event-driven)",
             fills=self._fills_frame(broker),
             positions=pl.DataFrame(position_rows) if position_rows else None,
+            bars=pl.concat(bar_frames) if bar_frames else None,
         )
 
     @staticmethod

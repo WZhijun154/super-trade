@@ -103,6 +103,18 @@ class LiveBridge:
             )
         await self._send("/portfolio", msg, ts_ns)
 
+    async def publish_bar(self, ts_ns: int, bar: Mapping) -> None:
+        msg = pb.Bar(
+            symbol=bar["symbol"],
+            open=float(bar["open"]),
+            high=float(bar["high"]),
+            low=float(bar["low"]),
+            close=float(bar["close"]),
+            volume=float(bar["volume"]),
+        )
+        msg.time.FromNanoseconds(ts_ns)
+        await self._send("/bars", msg, ts_ns)
+
     async def publish_fill(self, ts_ns: int, fill: Mapping) -> None:
         msg = pb.Fill(
             symbol=fill["symbol"],
@@ -150,6 +162,7 @@ async def serve_result(
     eq_rows = list(eq.iter_rows(named=True))
     pos_by_ts = _group_by_timestamp(result.positions)
     fills_by_ts = _group_by_timestamp(result.fills)
+    bars_by_ts = _group_by_timestamp(result.bars)
     delay = 1.0 / rate_hz if rate_hz > 0 else 0.0
 
     async with FoxgloveServer(
@@ -157,6 +170,7 @@ async def serve_result(
     ) as server:
         bridge = LiveBridge(server)
         # Advertise all topics up front so the panel sees them on connect.
+        await bridge.channel("/bars", pb.Bar)
         await bridge.channel("/equity", pb.Equity)
         await bridge.channel("/portfolio", pb.Portfolio)
         await bridge.channel("/fills", pb.Fill)
@@ -166,6 +180,8 @@ async def serve_result(
                 ts = row["timestamp"]
                 ts_ns = _to_ns(ts)
                 equity, cash = row["equity"], row["cash"]
+                for bar in bars_by_ts.get(ts, []):
+                    await bridge.publish_bar(ts_ns, bar)
                 await bridge.publish_equity(ts_ns, equity, cash, row["drawdown"])
                 if ts in pos_by_ts:
                     await bridge.publish_portfolio(ts_ns, equity, cash, pos_by_ts[ts])

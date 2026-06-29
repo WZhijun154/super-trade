@@ -32,6 +32,7 @@ class BacktestResult:
     strategy_name: str = "strategy"
     fills: pl.DataFrame | None = None
     positions: pl.DataFrame | None = None
+    bars: pl.DataFrame | None = None
 
     def stats(self) -> dict[str, float]:
         """Risk/return summary, computed on the equity curve."""
