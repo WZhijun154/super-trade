@@ -28,7 +28,7 @@ so an order that wouldn't have filled in reality doesn't fill here:
 from __future__ import annotations
 
 import math
-from datetime import datetime
+from datetime import date, datetime
 
 import polars as pl
 
@@ -84,6 +84,7 @@ class EventDrivenBacktest:
         resample_from: Interval | None = None,
         rules: MarketRules | None = None,
         weights: dict[str, float] | None = None,
+        weight_schedule: list[tuple[date, dict[str, float]]] | None = None,
     ) -> None:
         """Configure a run (nothing is read or simulated until ``run()``).
 
@@ -114,6 +115,13 @@ class EventDrivenBacktest:
                 ``Allocator``). The per-bar target becomes ``signal * weight`` — the
                 strategy times each name, the weight caps its share of the book.
                 ``None`` (or a missing symbol) → weight 1.0 = signal used as-is.
+            weight_schedule: Optional **time-varying** budgets for periodic rebalance
+                — a date-sorted list of ``(effective_date, {symbol: weight})``. At
+                each bar the active entry is the latest one whose date has passed; a
+                symbol absent from it gets budget **0** (so a name dropped at a
+                rebalance is scaled out). Before the first date, everything is flat.
+                Takes precedence over ``weights``. Build one with
+                ``super_trade.portfolio.periodic_schedule``.
         """
         self._store = store
         self._strategy = strategy
@@ -121,7 +129,11 @@ class EventDrivenBacktest:
         self._costs = costs or CostModel()
         self._risk = risk or RiskManager()
         self._rules = rules or MarketRules()
-        self._weights = weights or {}  # per-name portfolio budget (default 1.0 each)
+        self._weights = weights or {}  # static per-name budget (default 1.0 each)
+        # Periodic budgets: date-sorted (effective_date, weights); overrides _weights.
+        self._schedule = (
+            sorted(weight_schedule, key=lambda e: e[0]) if weight_schedule else []
+        )
         self._lot = LOT_SIZE  # board lot (100 shares); fills round down to this
         self._universe = universe
         self._interval = interval
@@ -196,6 +208,9 @@ class EventDrivenBacktest:
         # Limit reference: each symbol's close from the *previous* trading day,
         # used to compute today's 涨跌停 band.
         prev_ref_close: dict[str, float] = {}
+        # Periodic-rebalance state: index into self._schedule + the active budgets.
+        sched_idx = -1
+        active_budget: dict[str, float] = {}
 
         for ts in timeline:
             # Risk limits, the T+1 ledger and the limit reference are per *day*.
@@ -208,6 +223,16 @@ class EventDrivenBacktest:
                 prev_ref_close = dict(last_price)
                 bought_today = {}
                 risk.start_day(self._equity(broker, last_price))
+                # Advance the rebalance schedule to the latest budget now in effect.
+                while (
+                    sched_idx + 1 < len(self._schedule)
+                    and self._schedule[sched_idx + 1][0] <= current_date
+                ):
+                    sched_idx += 1
+                if self._schedule:
+                    active_budget = (
+                        self._schedule[sched_idx][1] if sched_idx >= 0 else {}
+                    )
 
             # Mark prices forward: any symbol that has a bar at this timestamp
             # gets its latest close (index [1]); symbols that didn't trade keep
@@ -242,7 +267,14 @@ class EventDrivenBacktest:
                     symbol, Side.SELL, price, volume, prev_ref_close.get(symbol)
                 ):
                     broker.place_order(
-                        Order(symbol, Side.SELL, qty, price, reason="stop_loss")
+                        Order(
+                            symbol,
+                            Side.SELL,
+                            qty,
+                            price,
+                            reason="stop_loss",
+                            participation=self._participation(qty, volume),
+                        )
                     )
 
             # 2) Rebalance each symbol toward its TARGET WEIGHT. `signal` is the
@@ -260,10 +292,14 @@ class EventDrivenBacktest:
                 prev_close = prev_ref_close.get(symbol)
                 held = broker.shares(symbol)  # shares currently held (0 if none)
                 # Target weight = signal (timing) * portfolio budget (allocation),
-                # then clamped to [0, per-name cap]. With no `weights` the budget is
-                # 1.0, so the target is just the clamped signal. Convert to a
-                # lot-aligned share target against equity and trade only the delta.
-                budget = self._weights.get(symbol, 1.0)
+                # then clamped to [0, per-name cap]. Convert to a lot-aligned share
+                # target against equity and trade only the delta. The budget comes
+                # from the active rebalance schedule (deselected name → 0 → scaled
+                # out); else the static `weights` (default 1.0 = signal as-is).
+                if self._schedule:
+                    budget = active_budget.get(symbol, 0.0)
+                else:
+                    budget = self._weights.get(symbol, 1.0)
                 weight = min(max(signal * budget, 0.0), risk.limits.max_position_weight)
                 desired = self._target_shares(weight, equity, open_px)
                 delta = desired - held  # >0 buy more, <0 sell some, 0 already there
@@ -282,7 +318,12 @@ class EventDrivenBacktest:
                     ):
                         fill = broker.place_order(
                             Order(
-                                symbol, Side.BUY, buyable, open_px, reason="rebalance"
+                                symbol,
+                                Side.BUY,
+                                buyable,
+                                open_px,
+                                reason="rebalance",
+                                participation=self._participation(buyable, volume),
                             )
                         )
                         if fill is not None:  # record T+1: these can't sell today
@@ -299,7 +340,14 @@ class EventDrivenBacktest:
                         symbol, Side.SELL, open_px, volume, prev_close
                     ):
                         broker.place_order(
-                            Order(symbol, Side.SELL, qty, open_px, reason="rebalance")
+                            Order(
+                                symbol,
+                                Side.SELL,
+                                qty,
+                                open_px,
+                                reason="rebalance",
+                                participation=self._participation(qty, volume),
+                            )
                         )
 
             # Record the post-trade equity + cash for this timestamp; this list
@@ -358,6 +406,11 @@ class EventDrivenBacktest:
         if price <= 0 or weight <= 0:
             return 0
         return int(weight * equity / price / self._lot + 0.5) * self._lot
+
+    @staticmethod
+    def _participation(shares: int, volume: float) -> float:
+        """Order size as a fraction of the bar's volume (drives market impact)."""
+        return shares / volume if volume > 0 else 0.0
 
     def _volume_cap(self, volume: float) -> int | None:
         """Max lot-aligned shares one order may take this bar (participation cap).

@@ -5,18 +5,23 @@ Charges, per bar, on the change in held weight (turnover):
 * **stamp tax (印花税)** — 5 bp, **sell side only** (the rate since 2023-08-28; the
   sell-only asymmetry matters).
 * **transfer fee (过户费)** — 0.1 bp, both sides.
-* **slippage** — a flat bp cost on turnover.
+* **slippage** — a base bp on turnover, **plus a size/liquidity-dependent market
+  impact**: the more of a bar's volume you take, the worse your fill. Modelled as
+  ``impact_coef * sqrt(participation)`` (the classic square-root impact law, where
+  ``participation = order shares / bar volume``). This is what makes trading thin
+  names cost what it really costs — crucial for illiquid / small-cap strategies.
 
 Two surfaces share these rates so backtest and live charge alike:
 * :meth:`CostModel.cost_expr` — vectorized, in fractional *weights* (subtracts
-  straight from the period return). The ¥5 floor can't apply here (no share lots,
-  only weights), so it's intentionally ignored.
+  straight from the period return). The ¥5 floor and market impact can't apply here
+  (no share lots / bar volume, only weights), so they're intentionally ignored.
 * :meth:`CostModel.trade_cost` — absolute ¥ for one share-lot trade, used by the
-  ``SimBroker``; this one *does* apply the ¥5 floor.
+  ``SimBroker``; this one applies the ¥5 floor and the participation-based impact.
 """
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 import polars as pl
@@ -29,7 +34,11 @@ class CostModel:
     commission_rate: float = 0.00025
     stamp_tax_rate: float = 0.0005  # 印花税, sell side only (rate since 2023-08-28)
     transfer_fee_rate: float = 0.00001  # 过户费, both sides
-    slippage_rate: float = 0.0001
+    slippage_rate: float = 0.0001  # base half-spread slippage on turnover
+    # Market-impact coefficient: extra slippage = impact_coef * sqrt(participation),
+    # participation = order shares / bar volume. e.g. taking 10% of a bar adds
+    # impact_coef*0.32; at 0.1 that's ~3.2%. Tune to your venue; 0 disables impact.
+    impact_coef: float = 0.1
     min_commission: float = 5.0  # ¥ per order floor (trade_cost only — see module doc)
 
     def cost_expr(self, held_col: str = "held") -> pl.Expr:
@@ -46,17 +55,32 @@ class CostModel:
         both_sides = self.commission_rate + self.transfer_fee_rate + self.slippage_rate
         return turnover * both_sides + sold * self.stamp_tax_rate
 
-    def trade_cost(self, notional: float, *, is_sell: bool) -> float:
+    def trade_cost(
+        self, notional: float, *, is_sell: bool, participation: float = 0.0
+    ) -> float:
         """Absolute cost (¥) for a single trade of the given notional.
 
         Reuses the same rates as the vectorized model so backtest and live charge
-        costs consistently, but adds the two share-level details the weight-based
-        ``cost_expr`` can't express: the **¥5 commission floor** and (since stamp
-        tax is sell-only) the sell-side asymmetry. Transfer fee + slippage apply
-        both sides.
+        costs consistently, but adds the share-level details the weight-based
+        ``cost_expr`` can't express: the **¥5 commission floor**, the sell-only stamp
+        tax, and **market impact**. Transfer fee + base slippage apply both sides.
+
+        Args:
+            notional: Trade value in ¥ (shares * price).
+            is_sell: Whether this is a sell (adds stamp tax).
+            participation: Order shares / the bar's volume — drives the impact term
+                ``impact_coef * sqrt(participation)``. 0 (the default, e.g. live
+                orders with no bar context) means no modelled impact.
+
+        Returns:
+            Total ¥ cost: commission (floored) + transfer + (base + impact) slippage
+            + sell-side stamp tax.
         """
         commission = max(notional * self.commission_rate, self.min_commission)
-        cost = commission + notional * (self.transfer_fee_rate + self.slippage_rate)
+        impact = self.impact_coef * math.sqrt(max(participation, 0.0))
+        cost = commission + notional * (
+            self.transfer_fee_rate + self.slippage_rate + impact
+        )
         if is_sell:
             cost += notional * self.stamp_tax_rate
         return cost
@@ -68,5 +92,6 @@ NO_COSTS = CostModel(
     stamp_tax_rate=0.0,
     transfer_fee_rate=0.0,
     slippage_rate=0.0,
+    impact_coef=0.0,
     min_commission=0.0,
 )

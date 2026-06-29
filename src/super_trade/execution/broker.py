@@ -34,6 +34,9 @@ class Order:
     shares: int
     price: float  # reference/limit price (current quote)
     reason: str = ""
+    # Order shares ÷ the bar's volume — lets the SimBroker charge size-dependent
+    # market impact. 0 (default, e.g. live orders) = no modelled impact.
+    participation: float = 0.0
 
 
 @dataclass(frozen=True)

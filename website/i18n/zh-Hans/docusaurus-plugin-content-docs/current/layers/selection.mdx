@@ -85,10 +85,31 @@ EventDrivenBacktest(store, strategy, universe=universe, weights=weights).run()
 比收益还大。配置是*较小*的杠杆；选股与风控更重要。
 :::
 
+## 周期性再平衡
+
+真实组合会按周期重新筛选、重新定量，而非一次性。`periodic_schedule` 预先算好这一切——在每个
+再平衡日，它以**截至该日**（因果，仅用过去的 bar）构建特征快照，选股并配置：
+
+```python
+from super_trade.portfolio import periodic_schedule, InverseVol
+
+universe, schedule = periodic_schedule(
+    store, selector, InverseVol(gross=0.9, max_weight=0.2),
+    every=21, lookback=40, fundamentals=fundamentals,   # 约每月，40 天预热
+)
+EventDrivenBacktest(store, strategy, universe=universe, weight_schedule=schedule).run()
+```
+
+它返回**并集股票池**（任一再平衡日选中过的所有名字）和一个按日期排序的
+`[(生效日, {symbol: 权重})]` 计划表。引擎激活其日期已过的最新一条；在某次再平衡中被**剔除**
+的名字权重变为 0、被减仓，新选入的被加仓——都走同一套差额再平衡循环。此处基本面是静态的
+（时变基本面属后续工作）。
+
 ## 诚实的局限
 
 - **基本面是假定的，尚未接入。** `adv`/`volatility`/`momentum` 是真实的；
   `float_mktcap`/`inst_ownership`/… 取决于你传入的帧。
 - **小盘股的幸存者偏差很严重。** 仅用*如今仍存活*的小盘股回测会严重高估收益——必须把**已退市**
   的名字纳入数据，否则结果偏乐观。
-- **静态，非周期性。** 本版只选/配一次。在回测循环内周期性地重选、重配是后续工作。
+- **时变基本面。** `periodic_schedule` 会按日期重选，但用的是*静态*基本面帧——时点（point-in-time）
+  的市值/机构持股（及其背后的数据接入）属后续工作。

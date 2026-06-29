@@ -19,10 +19,12 @@ The engine treats the strategy signal as *timing* and the allocation as *budget*
 from __future__ import annotations
 
 from .allocator import Allocator, EqualWeight, InverseVol, ScoreProportional
+from .rebalance import periodic_schedule
 
 __all__ = [
     "Allocator",
     "EqualWeight",
     "InverseVol",
     "ScoreProportional",
+    "periodic_schedule",
 ]

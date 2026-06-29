@@ -91,6 +91,29 @@ costs more than it gains. Allocation is the *smaller* lever; selection and risk 
 matter more.
 :::
 
+## Periodic rebalance
+
+Real portfolios re-screen and re-size on a schedule, not once. `periodic_schedule`
+precomputes that — at each rebalance date it builds a feature snapshot **as of that
+date** (causal, only past bars), selects, and allocates:
+
+```python
+from super_trade.portfolio import periodic_schedule, InverseVol
+
+universe, schedule = periodic_schedule(
+    store, selector, InverseVol(gross=0.9, max_weight=0.2),
+    every=21, lookback=40, fundamentals=fundamentals,   # ~monthly, 40-day warm-up
+)
+EventDrivenBacktest(store, strategy, universe=universe, weight_schedule=schedule).run()
+```
+
+It returns the **union universe** (every name selected at any rebalance) and a
+date-sorted `[(effective_date, {symbol: weight})]` schedule. The engine activates the
+latest entry whose date has passed; a name **dropped** at a rebalance gets weight 0
+and is scaled out, a newly selected one scaled in — all through the same delta
+rebalance loop. Fundamentals are static here (time-varying fundamentals are future
+work).
+
 ## Honest limitations
 
 - **Fundamentals are assumed, not yet ingested.** `adv`/`volatility`/`momentum` are
@@ -98,5 +121,6 @@ matter more.
 - **Survivorship bias is severe for small-caps.** A backtest on *today's* surviving
   small names overstates returns badly — you must include **delisted** names, or read
   the results as optimistic.
-- **Static, not periodic.** This cut selects/allocates once. Periodic re-selection and
-  re-allocation inside the backtest loop is future work.
+- **Time-varying fundamentals.** `periodic_schedule` re-selects per date, but on a
+  *static* fundamentals frame — point-in-time 市值/机构持股 (and the ingestion behind
+  them) is future work.

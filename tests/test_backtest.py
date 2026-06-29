@@ -79,6 +79,25 @@ def test_stamp_tax_only_on_sell() -> None:
     assert sum(costs) == pytest.approx(0.001)
 
 
+def test_market_impact_scales_with_participation() -> None:
+    # Isolate impact: every other rate zero, impact_coef 0.1.
+    model = CostModel(
+        commission_rate=0.0,
+        stamp_tax_rate=0.0,
+        transfer_fee_rate=0.0,
+        slippage_rate=0.0,
+        min_commission=0.0,
+        impact_coef=0.1,
+    )
+    # cost = notional * impact_coef * sqrt(participation)
+    base = model.trade_cost(10_000, is_sell=False, participation=0.0)
+    small = model.trade_cost(10_000, is_sell=False, participation=0.01)  # sqrt=0.1
+    big = model.trade_cost(10_000, is_sell=False, participation=0.04)  # sqrt=0.2
+    assert base == 0.0  # no size → no impact
+    assert small == pytest.approx(10_000 * 0.1 * 0.1)  # 100
+    assert big == pytest.approx(10_000 * 0.1 * 0.2)  # 200 — bigger order, worse fill
+
+
 def test_smacross_stats_well_formed() -> None:
     closes = [100.0 + math.sin(i / 3) * 5 + i * 0.1 for i in range(60)]
     res = VectorizedEngine().run(_bars(closes), SmaCross(5, 20))

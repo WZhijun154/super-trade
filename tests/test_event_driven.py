@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 import polars as pl
 from factories import make_bars
@@ -48,8 +48,10 @@ class _IndexWeights(Strategy):
         return expr
 
 
-def _flat_store(symbol: str, n: int, price: float = 100.0) -> FakeStore:
-    """`n` daily bars at a constant price with deep volume (no cap/limit effects)."""
+def _flat_store(
+    symbol: str, n: int, price: float = 100.0, volume: int = 10_000_000
+) -> FakeStore:
+    """`n` daily bars at a constant price; deep volume by default (no impact/cap)."""
     store = FakeStore()
     start = datetime(2024, 1, 1, tzinfo=UTC)
     store.write_bars(
@@ -62,7 +64,7 @@ def _flat_store(symbol: str, n: int, price: float = 100.0) -> FakeStore:
                 high=price,
                 low=price,
                 close=price,
-                volume=10_000_000,
+                volume=volume,
             )
             for i in range(n)
         ]
@@ -190,6 +192,47 @@ def test_allocation_weight_scales_the_budget() -> None:
     # full → ~95% invested (cap), half → ~50% invested → much more cash left
     assert cash_half > cash_full
     assert 45_000 < cash_half < 55_000
+
+
+def test_weight_schedule_activates_over_time() -> None:
+    # Periodic budgets: flat until Jan 5, then 50%. The deselected-early budget (0)
+    # keeps the book flat; the later budget scales the position in.
+    store = _flat_store("AAA", n=8)
+    schedule = [
+        (date(2024, 1, 1), {"AAA": 0.0}),  # flat
+        (date(2024, 1, 5), {"AAA": 0.5}),  # 50% from Jan 5 on
+    ]
+    result = EventDrivenBacktest(
+        store,
+        _ConstantWeight(1.0),
+        cash=100_000,
+        universe=["AAA"],
+        risk=RiskManager(_WIDE),
+        weight_schedule=schedule,
+    ).run()
+    cash = result.data["cash"].to_list()
+    assert cash[3] == 100_000  # Jan 4 — budget still 0 → flat
+    assert 45_000 < cash[-1] < 55_000  # after Jan 5 — ~50% invested
+
+
+def test_thin_liquidity_costs_more_than_deep() -> None:
+    # Same strategy and price, but a thin bar (low volume) → higher participation
+    # → more market impact → lower ending equity than a deep, liquid one.
+    deep = EventDrivenBacktest(
+        _flat_store("AAA", n=6, volume=10_000_000),
+        _ConstantWeight(0.5),
+        cash=100_000,
+        universe=["AAA"],
+        risk=RiskManager(_WIDE),
+    ).run()
+    thin = EventDrivenBacktest(
+        _flat_store("AAA", n=6, volume=20_000),
+        _ConstantWeight(0.5),
+        cash=100_000,
+        universe=["AAA"],
+        risk=RiskManager(_WIDE),
+    ).run()
+    assert thin.data["equity"].to_list()[-1] < deep.data["equity"].to_list()[-1]
 
 
 def test_target_weight_scales_in_and_out() -> None:

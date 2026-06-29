@@ -147,8 +147,10 @@ EventDrivenBacktest(store, strategy, universe=["600519"], rules=rules).run()
 ```
 
 **Costs** were also brought current: stamp tax **5 bp** (sell-only, the rate since
-2023-08-28), a **¥5 per-order commission floor**, and the **过户费** transfer fee
-(0.1 bp, both sides) — see `CostModel`.
+2023-08-28), a **¥5 per-order commission floor**, the **过户费** transfer fee (0.1 bp,
+both sides), and **size-aware market impact** — extra slippage
+`impact_coef × √(participation)` that grows as your order takes more of a bar's
+volume, so trading thin names costs what it really costs. See `CostModel`.
 
 :::tip[Why the numbers drop]
 Turnover-heavy strategies look *worse* under these rules than under the vectorized

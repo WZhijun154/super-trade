@@ -96,7 +96,11 @@ class SimBroker(Broker):
         if order.shares <= 0 or order.shares % self._lot != 0:
             return None
         notional = order.shares * order.price
-        cost = self._costs.trade_cost(notional, is_sell=order.side == Side.SELL)
+        cost = self._costs.trade_cost(
+            notional,
+            is_sell=order.side == Side.SELL,
+            participation=order.participation,
+        )
 
         if order.side == Side.BUY:
             # Capital constraint: must cover price *and* cost — no margin.

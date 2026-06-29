@@ -2,9 +2,19 @@
 
 from __future__ import annotations
 
-import polars as pl
+from datetime import UTC, datetime, timedelta
 
-from super_trade.portfolio import EqualWeight, InverseVol, ScoreProportional
+import polars as pl
+from fakes import FakeStore
+
+from super_trade.data import Bar, Interval
+from super_trade.portfolio import (
+    EqualWeight,
+    InverseVol,
+    ScoreProportional,
+    periodic_schedule,
+)
+from super_trade.selection import Rank, Selector
 
 
 def _feats() -> pl.DataFrame:
@@ -54,3 +64,48 @@ def test_score_proportional() -> None:
 def test_empty_features_give_no_weights() -> None:
     empty = pl.DataFrame(schema={"symbol": pl.String, "volatility": pl.Float64})
     assert InverseVol().weights(empty) == {}
+
+
+def _series_store(prices: dict[str, list[float]]) -> FakeStore:
+    store = FakeStore()
+    start = datetime(2024, 1, 1, tzinfo=UTC)
+    bars = [
+        Bar(
+            symbol=sym,
+            interval=Interval.DAY,
+            timestamp=start + timedelta(days=i),
+            open=c,
+            high=c,
+            low=c,
+            close=c,
+            volume=1_000_000,
+        )
+        for sym, closes in prices.items()
+        for i, c in enumerate(closes)
+    ]
+    store.write_bars(bars)
+    return store
+
+
+def test_periodic_schedule_reselects_over_time() -> None:
+    # A leads early then fades; B is flat then rises. A top-1-by-momentum screen
+    # should pick A at the early rebalances and B at the later ones.
+    n = 100
+    a = [100.0 + i if i < 50 else 150.0 - (i - 50) * 2 for i in range(n)]
+    b = [100.0 if i < 50 else 100.0 + (i - 50) for i in range(n)]
+    store = _series_store({"A": a, "B": b})
+
+    selector = Selector(score=Rank("momentum", ascending=False), top_n=1)
+    universe, schedule = periodic_schedule(
+        store,
+        selector,
+        EqualWeight(gross=0.9, max_weight=0.9),
+        every=21,
+        lookback=20,
+    )
+    assert len(schedule) >= 2
+    assert set(universe) == {"A", "B"}  # selection flipped → union holds both
+    assert "A" in schedule[0][1]  # early rebalance picks the early leader
+    assert "B" in schedule[-1][1]  # late rebalance picks the late leader
+    # every period's weights are normalised (≤ gross)
+    assert all(sum(w.values()) <= 0.9 + 1e-9 for _, w in schedule)
