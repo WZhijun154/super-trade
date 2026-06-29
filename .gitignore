@@ -19,3 +19,4 @@ wheels/
 
 # Generated backtest equity-curve HTML artifacts
 *_equity.html
+*.mcap

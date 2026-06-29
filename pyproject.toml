@@ -7,6 +7,7 @@ requires-python = ">=3.12"
 dependencies = [
     "akshare>=1.18.64",
     "clickhouse-connect>=1.3.0",
+    "foxglove-websocket>=0.1.4",
     "logfire>=4.37.0",
     "mcap>=1.4.0",
     "mcap-protobuf-support>=0.5.4",
