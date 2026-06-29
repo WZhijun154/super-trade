@@ -96,8 +96,10 @@ vectorized engine).
   - *per-name*: `max_position_weight × equity` − what you already hold,
   - *gross*: `max_gross_exposure × equity` − total invested,
   - your available **cash**.
-- **Stop-loss** — `stop_triggered(pos, price)` is true when
-  `price ≤ avg_price × (1 − stop_loss)`; the engine then sells that name.
+- **Stop-loss** — fires when `price ≤ avg_price × (1 − stop_loss)`. The event-driven
+  engine checks it **intrabar** against the bar's **low** (so it triggers even if the
+  close recovers) and fills at the stop price — or worse, the **gap-down open**
+  (`min(open, stop_price)`) if the bar opened through the level.
 - **Daily-loss halt** — `start_day(equity)` snapshots the morning equity;
   `update_daily_loss(equity)` halts once equity drops past `max_daily_loss`.
 - **Order-count cap** — `can_trade()` becomes false after `max_orders_per_day`.

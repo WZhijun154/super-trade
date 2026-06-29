@@ -13,7 +13,8 @@ stats and charts.
 The strategy's target column is precomputed once over the full window (valid —
 indicators are causal, backward-looking only), then **lagged one bar**: a signal
 formed on bar *t*'s close is executed at *t+1*'s **open**, never at the close that
-produced it. Stop-losses are checked against each bar's close. This matches the
+produced it. Stop-losses trigger **intrabar** (on the bar's low) and fill at the stop
+price — or the gap-down open if the bar opened through it. This matches the
 vectorized engine's one-bar lag, so the two tiers are comparable.
 
 On top of that it applies A-share **market** rules (``MarketRules``, default on),
@@ -160,9 +161,9 @@ class EventDrivenBacktest:
         # on it at the NEXT bar's OPEN — the standard retail convention. A signal
         # formed from bar t's close is therefore traded at t+1's open, never at
         # the same close that produced it. `signal` below is that lagged target.
-        # `volume` is carried too: it caps partial fills (the participation rate).
+        # `volume` caps partial fills; `low` lets a stop trigger intrabar (below).
         bars_by_symbol: dict[
-            str, dict[datetime, tuple[float, float, float, float]]
+            str, dict[datetime, tuple[float, float, float, float, float]]
         ] = {}
         # The union of every symbol's bar timestamps becomes the simulation clock.
         timestamps: set[datetime] = set()
@@ -181,8 +182,8 @@ class EventDrivenBacktest:
             # on the *previous* bar's decision (executed at this bar's open).
             bars = bars.with_columns(self._strategy.positions().alias("target"))
             bars = bars.with_columns(pl.col("target").shift(1).alias("signal"))
-            # Flatten into {timestamp: (open, close, volume, signal)} for O(1) access.
-            row_map: dict[datetime, tuple[float, float, float, float]] = {}
+            # Flatten into {ts: (open, low, close, volume, signal)} for O(1) access.
+            row_map: dict[datetime, tuple[float, float, float, float, float]] = {}
             for row in bars.iter_rows(named=True):
                 signal = row["signal"]
                 # null (first bar / warm-up) or NaN (a strategy dividing through an
@@ -191,6 +192,7 @@ class EventDrivenBacktest:
                     signal = 0.0
                 row_map[row["timestamp"]] = (
                     float(row["open"]),
+                    float(row["low"]),
                     float(row["close"]),
                     float(row["volume"]),
                     float(signal),
@@ -235,43 +237,45 @@ class EventDrivenBacktest:
                     )
 
             # Mark prices forward: any symbol that has a bar at this timestamp
-            # gets its latest close (index [1]); symbols that didn't trade keep
-            # their old price. Close is the mark-to-market / stop-check reference.
+            # gets its latest close (index [2]); symbols that didn't trade keep
+            # their old price. Close is the mark-to-market reference.
             for symbol, row_map in bars_by_symbol.items():
                 if ts in row_map:
-                    last_price[symbol] = row_map[ts][1]
+                    last_price[symbol] = row_map[ts][2]
 
             # Mark the whole account to market at the current prices, then let the
             # risk manager check whether the daily-loss limit is now breached.
             equity = self._equity(broker, last_price)
             risk.update_daily_loss(equity)
 
-            # 1) Stop-loss exits run FIRST (risk before reward). For every open
-            #    position past its stop, sell what we're *allowed* to sell at the
-            #    close. `stopped` marks the name (even if the sell is blocked) so
-            #    we never re-buy something we're trying to exit this bar.
-            #    Market rules can block/partial the exit — the harsh-but-real path:
-            #    a 停牌/跌停 bar or shares bought today (T+1) leave you trapped.
+            # 1) Stop-loss exits run FIRST (risk before reward). The stop triggers
+            #    INTRABAR — on the bar's LOW, so it fires even if the close recovers
+            #    above the level — and fills at the stop price, or worse at the OPEN
+            #    if the bar gapped below it (`min(open, stop_price)`). `stopped`
+            #    marks the name so we never re-buy something we're exiting this bar.
+            #    Market rules can still block/partial the exit (停牌/跌停, or shares
+            #    bought today under T+1 leave you trapped).
             stopped: set[str] = set()
             for symbol, pos in list(broker.positions().items()):
-                price = last_price.get(symbol)
-                if price is None or not risk.stop_triggered(pos, price):
-                    continue
-                stopped.add(symbol)
                 bar = bars_by_symbol[symbol].get(ts)
                 if bar is None:
                     continue  # 停牌 / no bar today → can't exit, position trapped
-                volume = bar[2]  # (open, close, volume, signal)
+                open_px, low, _close, volume, _signal = bar
+                if not risk.stop_triggered(pos, low):  # low breached the stop level?
+                    continue
+                stopped.add(symbol)
+                # Fill at the stop level, or at the open if the bar gapped below it.
+                fill_price = min(open_px, risk.stop_price(pos))
                 qty = self._exitable(pos.shares, symbol, bought_today, volume)
                 if qty > 0 and self._tradable(
-                    symbol, Side.SELL, price, volume, prev_ref_close.get(symbol)
+                    symbol, Side.SELL, fill_price, volume, prev_ref_close.get(symbol)
                 ):
                     broker.place_order(
                         Order(
                             symbol,
                             Side.SELL,
                             qty,
-                            price,
+                            fill_price,
                             reason="stop_loss",
                             participation=self._participation(qty, volume),
                         )
@@ -288,7 +292,7 @@ class EventDrivenBacktest:
                 # Skip symbols with no bar at this timestamp, or just stopped out.
                 if ts not in row_map or symbol in stopped:
                     continue
-                open_px, _close, volume, signal = row_map[ts]
+                open_px, _low, _close, volume, signal = row_map[ts]
                 prev_close = prev_ref_close.get(symbol)
                 held = broker.shares(symbol)  # shares currently held (0 if none)
                 # Target weight = signal (timing) * portfolio budget (allocation),

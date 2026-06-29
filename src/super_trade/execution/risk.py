@@ -54,9 +54,17 @@ class RiskManager:
             self.halted = True
         return self.halted
 
+    def stop_price(self, position: Position) -> float:
+        """The price at/below which the position's stop-loss fires."""
+        return position.avg_price * (1 - self.limits.stop_loss)
+
     def stop_triggered(self, position: Position, price: float) -> bool:
-        """True if ``price`` is at/below the position's stop-loss level."""
-        return price <= position.avg_price * (1 - self.limits.stop_loss)
+        """True if ``price`` is at/below the position's stop-loss level.
+
+        Pass the bar's **low** to detect an intrabar trigger (the stop fires even if
+        the close later recovers above the level).
+        """
+        return price <= self.stop_price(position)
 
     def can_trade(self) -> bool:
         return not self.halted and self._orders_today < self.limits.max_orders_per_day

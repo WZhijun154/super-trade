@@ -11,7 +11,12 @@ from fakes import FakeStore
 from super_trade.backtest import BuyAndHold, SmaCross
 from super_trade.backtest.strategy import Strategy
 from super_trade.data import Bar, Interval
-from super_trade.execution import EventDrivenBacktest, RiskLimits, RiskManager
+from super_trade.execution import (
+    EventDrivenBacktest,
+    MarketRules,
+    RiskLimits,
+    RiskManager,
+)
 
 # Near-all-in caps so a target weight isn't clipped by the default 20% per-name
 # limit, and the daily-loss halt never fires.
@@ -254,6 +259,77 @@ def test_target_weight_scales_in_and_out() -> None:
     assert cash[2] > cash[3] > cash[4]
     # Scale OUT (bars 5-6): each sell raises cash back up.
     assert cash[4] < cash[5] < cash[6]
+
+
+def _ohlc_store(
+    symbol: str, ohlc: list[tuple[float, float, float, float]]
+) -> FakeStore:
+    """Daily bars from explicit (open, high, low, close), deep volume."""
+    store = FakeStore()
+    start = datetime(2024, 1, 1, tzinfo=UTC)
+    store.write_bars(
+        [
+            Bar(
+                symbol=symbol,
+                interval=Interval.DAY,
+                timestamp=start + timedelta(days=i),
+                open=o,
+                high=h,
+                low=low,
+                close=c,
+                volume=10_000_000,
+            )
+            for i, (o, h, low, c) in enumerate(ohlc)
+        ]
+    )
+    return store
+
+
+def test_stop_triggers_intrabar_on_low() -> None:
+    # Buy at 100 (8% stop → level 92). Day 2 wicks down to a LOW of 90 (below 92)
+    # but CLOSES at 96 (above 92): a close-only rule would miss the stop; triggering
+    # on the bar's low fires it. After the stop, the position is sold (cash jumps).
+    ohlc = [
+        (100.0, 100.0, 100.0, 100.0),  # day0 — lagged, no trade
+        (100.0, 100.0, 100.0, 100.0),  # day1 — buy @100
+        (98.0, 98.0, 90.0, 96.0),  # day2 — wick to 90, recover to 96
+        (96.0, 96.0, 96.0, 96.0),  # day3
+    ]
+    result = EventDrivenBacktest(
+        _ohlc_store("AAA", ohlc),
+        BuyAndHold(),
+        cash=100_000,
+        universe=["AAA"],
+        risk=RiskManager(_WIDE),  # stop_loss defaults to 0.08
+    ).run()
+    cash = result.data["cash"].to_list()
+    assert cash[1] < 20_000  # day1: ~90% invested
+    assert cash[2] > 80_000  # day2: stop fired on the low → sold back to cash
+
+
+def test_stop_gap_down_fills_at_open_not_stop_price() -> None:
+    # Both buy at 100 (stop level 92). One bar GAPS to open 85 (below 92) → fills at
+    # 85; the other opens 98 then wicks to 80 → fills at the stop level 92. The gap
+    # fills worse, so it ends with less cash after the stop bar. (Limits off so the
+    # 85 sell isn't blocked as 跌停.)
+    head = [(100.0, 100.0, 100.0, 100.0), (100.0, 100.0, 100.0, 100.0)]
+    no_limits = MarketRules(enforce_price_limits=False)
+
+    def stop_bar_cash(stop_bar: tuple[float, float, float, float]) -> float:
+        store = _ohlc_store("AAA", [*head, stop_bar, (90.0, 90.0, 90.0, 90.0)])
+        result = EventDrivenBacktest(
+            store,
+            BuyAndHold(),
+            cash=100_000,
+            universe=["AAA"],
+            risk=RiskManager(_WIDE),
+            rules=no_limits,
+        ).run()
+        return result.data["cash"].to_list()[2]
+
+    gap = stop_bar_cash((85.0, 85.0, 80.0, 85.0))  # gaps below stop → fill ~85
+    wick = stop_bar_cash((98.0, 98.0, 80.0, 92.0))  # falls through → fill ~92
+    assert gap < wick  # gap-down fill is worse
 
 
 def test_stop_loss_preserves_capital_on_crash() -> None:
