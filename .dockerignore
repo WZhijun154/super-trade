@@ -1,0 +1,16 @@
+# Keep the build context small — only what the image needs.
+.git
+.github
+.venv
+.ruff_cache
+.mypy_cache
+.pytest_cache
+__pycache__
+*.py[oc]
+
+# Docs site, local artifacts, and secrets are never needed in the image.
+website
+*.mcap
+*_equity.html
+.env
+.claude

@@ -17,12 +17,14 @@ from __future__ import annotations
 
 from .costs import NO_COSTS, CostModel
 from .engine import VectorizedEngine, run_backtest
+from .registry import STRATEGIES, build_strategy
 from .result import BacktestResult
 from .strategies import BuyAndHold, RsiReversion, ScaledRsiReversion, SmaCross
 from .strategy import Strategy
 
 __all__ = [
     "NO_COSTS",
+    "STRATEGIES",
     "BacktestResult",
     "BuyAndHold",
     "CostModel",
@@ -31,5 +33,6 @@ __all__ = [
     "SmaCross",
     "Strategy",
     "VectorizedEngine",
+    "build_strategy",
     "run_backtest",
 ]

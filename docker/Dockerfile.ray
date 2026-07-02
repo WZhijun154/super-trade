@@ -1,0 +1,38 @@
+# syntax=docker/dockerfile:1
+
+# Image for running super-trade backtest sweeps on a Ray cluster (KubeRay on
+# k3s/k8s, or a standalone Ray head). Includes the optional `ray` dependency group.
+#
+#   docker build -f docker/Dockerfile.ray -t super-trade-ray .
+#
+# On KubeRay the RayCluster CRD supplies the head/worker command; this image just
+# provides the environment (super-trade + ray). ClickHouse must be reachable from
+# the pods, since each Ray task reads bars from the store itself.
+
+FROM python:3.12-slim
+
+# uv for fast, lockfile-pinned installs.
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+
+ENV UV_LINK_MODE=copy \
+    UV_COMPILE_BYTECODE=1 \
+    UV_PROJECT_ENVIRONMENT=/opt/venv \
+    PATH=/opt/venv/bin:$PATH
+
+WORKDIR /app
+
+# Layer 1: dependencies only (cached until pyproject.toml / uv.lock change).
+COPY pyproject.toml uv.lock ./
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev --no-install-project --group ray
+
+# Layer 2: the project itself.
+COPY . .
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev --group ray
+
+# Ray GCS (6379), client server (10001), dashboard (8265).
+EXPOSE 6379 10001 8265
+
+# Sanity default; KubeRay/`ray start` overrides this in a cluster.
+CMD ["python", "-c", "import ray, super_trade; print('super-trade + ray', ray.__version__)"]

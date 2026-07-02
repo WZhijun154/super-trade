@@ -69,9 +69,18 @@ ignore_missing_imports = true
 module = "mcap.*"
 follow_imports = "skip"
 
+# ray is an optional dependency group (RayRunner); not installed in the default env.
+[[tool.mypy.overrides]]
+module = "ray.*"
+ignore_missing_imports = true
+
 [dependency-groups]
 dev = [
     "mypy>=2.1.0",
     "pytest>=9.1.1",
     "ruff>=0.15.18",
+]
+# Distributed RayRunner backend — optional. Install with: uv sync --group ray
+ray = [
+    "ray>=2.9",
 ]

@@ -39,6 +39,7 @@ interfaces (`DataStore`, `DataSource`, `Broker`).
 | `backtest/` | **backtest (vectorized)** | `Strategy` (ABC), `VectorizedEngine`, `CostModel`, `BacktestResult`. Fast signal research, no lookahead, A-share costs. |
 | `portfolio/` | **allocation** | `Allocator`s (`EqualWeight`, `InverseVol`, …) that size the selected names against each other. |
 | `execution/` | **execution (event-driven / live)** | `Broker` (Sim/QMT), `ExecutionEngine`, `RiskManager`, `EventDrivenBacktest`. Models stop-loss, real cash/lots. |
+| `runner/` | **large-scale backtesting** | `RunSpec` (a run as data) + `grid()`; a `Runner` fans specs out and reduces each to a stats row. Backends: `SimpleRunner`, `MultiProcessRunner`, `RayRunner` (k8s/k3s). |
 | `viz/` | **charts** | Pure Plotly figure builders (`DataFrame -> go.Figure`). |
 | `foxglove/` | **telemetry** | Export a backtest to `.mcap`, or stream it live over WebSocket, for the Foxglove "Trade Cockpit" panel. |
 | `observability.py` | | Logfire configuration. |
@@ -126,6 +127,19 @@ from super_trade.foxglove import export_mcap
 
 result = EventDrivenBacktest(store, SmaCross(10, 30), universe=["600519"]).run()
 export_mcap(result, "run.mcap")   # scrub the run in Foxglove's Trade Cockpit
+```
+
+Sweep a parameter grid — the runner fans independent runs out and reduces each to a
+comparable stats row. Swap `SimpleRunner` for `MultiProcessRunner()` to saturate a box,
+or `RayRunner()` for a cluster; the code is otherwise identical:
+
+```python
+from super_trade.runner import SimpleRunner, grid
+
+specs = grid("sma_cross", fast=[5, 10, 20], slow=[30, 60], universe=["600519"])
+report = SimpleRunner().run(specs, store)
+print(report.to_frame().sort("sharpe", descending=True))
+best = report.best("sharpe")
 ```
 
 Runnable end-to-end scripts live in [`examples/`](examples/README.md) (they read real
