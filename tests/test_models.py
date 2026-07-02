@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Any
 
 import pytest
 from pydantic import ValidationError
@@ -10,7 +11,7 @@ from pydantic import ValidationError
 from super_trade.data import Bar, Interval
 
 
-def _kwargs(**overrides: object) -> dict:
+def _kwargs(**overrides: Any) -> dict[str, Any]:
     base = dict(
         symbol="X",
         interval=Interval.DAY,
@@ -34,7 +35,7 @@ def test_valid_bar() -> None:
 def test_bar_is_frozen() -> None:
     bar = Bar(**_kwargs())
     with pytest.raises(ValidationError):
-        bar.close = 12.0  # type: ignore[misc]
+        bar.close = 12.0
 
 
 @pytest.mark.parametrize(
@@ -46,6 +47,6 @@ def test_bar_is_frozen() -> None:
         {"close": 100.0},  # close outside [low, high]
     ],
 )
-def test_invalid_bar_rejected(overrides: dict) -> None:
+def test_invalid_bar_rejected(overrides: dict[str, Any]) -> None:
     with pytest.raises(ValidationError):
         Bar(**_kwargs(**overrides))

@@ -12,9 +12,9 @@ import logfire
 
 def configure_logfire(*, console: bool = True) -> None:
     """Configure Logfire for this process."""
-    kwargs: dict[str, object] = {} if console else {"console": False}
     logfire.configure(
         service_name="super-trade",
         send_to_logfire="if-token-present",
-        **kwargs,
+        # ``False`` disables the console exporter; ``None`` keeps the default.
+        console=None if console else False,
     )

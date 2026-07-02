@@ -117,7 +117,7 @@ def test_t_plus_1_traps_same_day_stop() -> None:
             risk=RiskManager(_ALLIN),
             rules=MarketRules(t_plus_1=t_plus_1),
         ).run()
-        return result.data["equity"].to_list()[-1]
+        return float(result.data["equity"].to_list()[-1])
 
     trapped = run(True)
     free = run(False)
@@ -159,7 +159,7 @@ def test_suspension_blocks_fills() -> None:
             risk=RiskManager(_ALLIN),
             rules=MarketRules(enforce_suspension=enforce, participation_rate=0.0),
         ).run()
-        return result.data["cash"].to_list()[-1]
+        return float(result.data["cash"].to_list()[-1])
 
     assert final_cash(True) == 100_000  # suspended → never filled
     assert final_cash(False) < 100_000  # allowed → bought

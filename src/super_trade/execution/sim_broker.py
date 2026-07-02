@@ -124,12 +124,12 @@ class SimBroker(Broker):
             pos.shares = new_shares
         else:  # SELL
             # Can only sell shares actually held — no shorting / overselling.
-            pos = self._account.positions.get(order.symbol)
-            if pos is None or pos.shares < order.shares:
+            held = self._account.positions.get(order.symbol)
+            if held is None or held.shares < order.shares:
                 return None
             self._account.cash += notional - cost  # proceeds net of cost
-            pos.shares -= order.shares
-            if pos.shares == 0:
+            held.shares -= order.shares
+            if held.shares == 0:
                 del self._account.positions[order.symbol]  # flat → drop the entry
 
         # Record the completed trade (drives the report + trade-level analysis).

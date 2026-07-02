@@ -83,7 +83,14 @@ def test_force_refetches_ignoring_cache() -> None:
 
 def test_failure_is_isolated_per_symbol() -> None:
     class Boom(FakeSource):
-        def fetch_bars(self, symbol, interval, start=None, end=None, adjust=Adjust.HFQ):  # type: ignore[override]
+        def fetch_bars(
+            self,
+            symbol: str,
+            interval: Interval,
+            start: datetime | None = None,
+            end: datetime | None = None,
+            adjust: Adjust = Adjust.HFQ,
+        ) -> list[Bar]:
             if symbol == "BAD":
                 raise ConnectionError("boom")
             return super().fetch_bars(symbol, interval, start, end, adjust)

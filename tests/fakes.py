@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from datetime import datetime
+from typing import Any
 
 import polars as pl
 
@@ -19,7 +20,7 @@ from super_trade.data.store import DataStore
 
 class FakeStore(DataStore):
     def __init__(self) -> None:
-        self._rows: dict[tuple[str, str, datetime], dict] = {}
+        self._rows: dict[tuple[str, str, datetime], dict[str, Any]] = {}
         self.initialized = False
 
     def init_schema(self) -> None:
@@ -70,7 +71,7 @@ class FakeStore(DataStore):
         self._rows.clear()
 
     @staticmethod
-    def _normalize(bars: Iterable[Bar] | pl.DataFrame) -> list[dict]:
+    def _normalize(bars: Iterable[Bar] | pl.DataFrame) -> list[dict[str, Any]]:
         if isinstance(bars, pl.DataFrame):
             return bars.select(BAR_COLUMNS).to_dicts()
         return [

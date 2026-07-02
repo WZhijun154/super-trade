@@ -45,8 +45,33 @@ select = ["E", "W", "F", "I", "N", "UP", "B", "SIM", "RUF"]
 quote-style = "double"
 indent-style = "space"
 
+[tool.mypy]
+python_version = "3.12"
+# Type-check the package and its tests. Presentation/demo code (dashboard,
+# examples, scripts) is intentionally out of scope.
+files = ["src", "tests"]
+# Generated protobuf bindings (buf generate) — don't type-check machine code.
+exclude = ['src/super_trade/foxglove/_proto/']
+strict = true
+# Third-party libs (akshare, xtquant, clickhouse-connect, streamlit, …) ship no
+# type stubs; don't fail on their missing imports.
+ignore_missing_imports = true
+warn_unreachable = true
+
+# xtquant is imported lazily and only exists on a MiniQMT box; never installed here.
+[[tool.mypy.overrides]]
+module = "xtquant.*"
+ignore_missing_imports = true
+
+# mcap ships types but its namespace packaging trips mypy's duplicate-module
+# check ("Source file found twice") — don't follow into it.
+[[tool.mypy.overrides]]
+module = "mcap.*"
+follow_imports = "skip"
+
 [dependency-groups]
 dev = [
+    "mypy>=2.1.0",
     "pytest>=9.1.1",
     "ruff>=0.15.18",
 ]

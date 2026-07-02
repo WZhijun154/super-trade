@@ -144,7 +144,8 @@ class ClickHouseStore(DataStore):
             f"WHERE {' AND '.join(where)} ORDER BY timestamp"
         )
         table = self.client.query_arrow(query, parameters=params)
-        return pl.from_arrow(table)
+        # from_arrow on a multi-column Arrow table always yields a DataFrame.
+        return pl.DataFrame(pl.from_arrow(table))
 
     def latest_timestamp(self, symbol: str, interval: Interval) -> datetime | None:
         query = (
@@ -158,9 +159,10 @@ class ClickHouseStore(DataStore):
         count, latest = result.result_rows[0]
         if not count:
             return None
-        if latest.tzinfo is None:
-            latest = latest.replace(tzinfo=UTC)
-        return latest
+        ts: datetime = latest
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=UTC)
+        return ts
 
     def list_symbols(self, interval: Interval | None = None) -> list[str]:
         params: dict[str, object] = {}

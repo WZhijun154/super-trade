@@ -86,6 +86,9 @@ uv run streamlit run dashboard/app.py          # the explorer dashboard (localho
 uv run ruff format . && uv run ruff check --fix .
 uv run ruff check .                       # CI check
 
+# Type-check (strict mypy over src/ + tests/; config in pyproject.toml)
+uv run mypy                                # reads [tool.mypy] files=[...]; no path arg
+
 # Tests
 uv run pytest -m "not integration"        # unit tier — fast, no services (default for dev/CI)
 uv run pytest                             # + integration tier (needs ClickHouse)

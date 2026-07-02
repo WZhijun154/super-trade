@@ -11,13 +11,16 @@ from __future__ import annotations
 
 import asyncio
 import base64
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from datetime import datetime
+from typing import Any
 
 import polars as pl
 from foxglove_websocket.server import FoxgloveServer
 from foxglove_websocket.types import ChannelId
+from google.protobuf.descriptor import FileDescriptor
 from google.protobuf.descriptor_pb2 import FileDescriptorSet
+from google.protobuf.message import Message
 
 from super_trade.backtest.result import BacktestResult
 
@@ -25,7 +28,7 @@ from ._proto.supertrade.v1 import trade_pb2 as pb
 from .export import _to_ns
 
 
-def _b64_file_descriptor_set(msg_class: type) -> str:
+def _b64_file_descriptor_set(msg_class: type[Message]) -> str:
     """Base64 ``FileDescriptorSet`` for ``msg_class`` (the Foxglove protobuf schema).
 
     Walks the message's file and its imports (e.g. ``google/protobuf/timestamp``)
@@ -34,7 +37,7 @@ def _b64_file_descriptor_set(msg_class: type) -> str:
     fds = FileDescriptorSet()
     seen: set[str] = set()
 
-    def add(file_descriptor) -> None:
+    def add(file_descriptor: FileDescriptor) -> None:
         if file_descriptor.name in seen:
             return
         seen.add(file_descriptor.name)
@@ -58,7 +61,7 @@ class LiveBridge:
         self._server = server
         self._channels: dict[str, ChannelId] = {}
 
-    async def channel(self, topic: str, msg_class: type) -> ChannelId:
+    async def channel(self, topic: str, msg_class: type[Message]) -> ChannelId:
         """Register (once) and return the channel id for ``topic`` / ``msg_class``."""
         if topic not in self._channels:
             self._channels[topic] = await self._server.add_channel(
@@ -72,7 +75,7 @@ class LiveBridge:
             )
         return self._channels[topic]
 
-    async def _send(self, topic: str, msg, ts_ns: int) -> None:
+    async def _send(self, topic: str, msg: Message, ts_ns: int) -> None:
         chan = await self.channel(topic, type(msg))
         await self._server.send_message(chan, ts_ns, msg.SerializeToString())
 
@@ -84,7 +87,11 @@ class LiveBridge:
         await self._send("/equity", msg, ts_ns)
 
     async def publish_portfolio(
-        self, ts_ns: int, equity: float, cash: float, positions: list[Mapping]
+        self,
+        ts_ns: int,
+        equity: float,
+        cash: float,
+        positions: Sequence[Mapping[str, Any]],
     ) -> None:
         msg = pb.Portfolio(equity=equity, cash=cash, num_positions=len(positions))
         msg.time.FromNanoseconds(ts_ns)
@@ -103,7 +110,7 @@ class LiveBridge:
             )
         await self._send("/portfolio", msg, ts_ns)
 
-    async def publish_bar(self, ts_ns: int, bar: Mapping) -> None:
+    async def publish_bar(self, ts_ns: int, bar: Mapping[str, Any]) -> None:
         msg = pb.Bar(
             symbol=bar["symbol"],
             open=float(bar["open"]),
@@ -115,7 +122,7 @@ class LiveBridge:
         msg.time.FromNanoseconds(ts_ns)
         await self._send("/bars", msg, ts_ns)
 
-    async def publish_fill(self, ts_ns: int, fill: Mapping) -> None:
+    async def publish_fill(self, ts_ns: int, fill: Mapping[str, Any]) -> None:
         msg = pb.Fill(
             symbol=fill["symbol"],
             side=fill["side"],
@@ -129,9 +136,11 @@ class LiveBridge:
         await self._send("/fills", msg, ts_ns)
 
 
-def _group_by_timestamp(frame: pl.DataFrame | None) -> dict[datetime, list[dict]]:
+def _group_by_timestamp(
+    frame: pl.DataFrame | None,
+) -> dict[datetime, list[dict[str, Any]]]:
     """Bucket a telemetry frame's rows by their ``timestamp`` column."""
-    out: dict[datetime, list[dict]] = {}
+    out: dict[datetime, list[dict[str, Any]]] = {}
     if frame is None:
         return out
     for row in frame.iter_rows(named=True):

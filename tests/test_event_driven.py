@@ -325,7 +325,7 @@ def test_stop_gap_down_fills_at_open_not_stop_price() -> None:
             risk=RiskManager(_WIDE),
             rules=no_limits,
         ).run()
-        return result.data["cash"].to_list()[2]
+        return float(result.data["cash"].to_list()[2])
 
     gap = stop_bar_cash((85.0, 85.0, 80.0, 85.0))  # gaps below stop → fill ~85
     wick = stop_bar_cash((98.0, 98.0, 80.0, 92.0))  # falls through → fill ~92

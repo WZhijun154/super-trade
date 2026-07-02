@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 from factories import make_bars
 from fakes import FakeStore
@@ -81,7 +83,7 @@ def test_max_buy_shares_respects_caps() -> None:
 # --- ExecutionEngine -------------------------------------------------------
 
 
-def _store_with(symbol: str, **kw) -> FakeStore:
+def _store_with(symbol: str, **kw: Any) -> FakeStore:
     store = FakeStore()
     store.write_bars(make_bars(symbol=symbol, interval=Interval.DAY, count=30, **kw))
     return store

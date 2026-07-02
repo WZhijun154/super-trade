@@ -15,8 +15,10 @@ positions, cash and fills move together. The schema is the buf-managed
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import polars as pl
 from mcap_protobuf.writer import Writer
@@ -130,16 +132,18 @@ def export_mcap(result: BacktestResult, path: str | Path) -> Path:
     return path
 
 
-def _group_by_ts(positions: pl.DataFrame):
+def _group_by_ts(
+    positions: pl.DataFrame,
+) -> Iterator[tuple[datetime, list[dict[str, Any]]]]:
     """Yield (timestamp, [row dicts]) groups in chronological order."""
-    current_ts = None
-    bucket: list[dict] = []
+    current_ts: datetime | None = None
+    bucket: list[dict[str, Any]] = []
     for row in positions.iter_rows(named=True):
         if row["timestamp"] != current_ts:
-            if bucket:
+            if bucket and current_ts is not None:
                 yield current_ts, bucket
             current_ts = row["timestamp"]
             bucket = []
         bucket.append(row)
-    if bucket:
+    if bucket and current_ts is not None:
         yield current_ts, bucket

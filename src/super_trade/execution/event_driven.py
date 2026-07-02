@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import math
 from datetime import date, datetime
+from typing import Any
 
 import polars as pl
 
@@ -210,7 +211,7 @@ class EventDrivenBacktest:
         # ---- Phase 2: step through time, bar by bar ---------------------------
         timeline = sorted(timestamps)  # chronological order — the "clock"
         last_price: dict[str, float] = {}  # most recent known close per symbol
-        equity_rows: list[dict] = []  # one equity snapshot per timestamp
+        equity_rows: list[dict[str, Any]] = []  # one equity snapshot per timestamp
         current_date = None  # tracks day boundaries for per-day resets
         # T+1 ledger: shares bought *today* per symbol (can't be sold until tmrw).
         bought_today: dict[str, int] = {}
@@ -221,7 +222,7 @@ class EventDrivenBacktest:
         sched_idx = -1
         active_budget: dict[str, float] = {}
         # Telemetry: per-bar snapshot of open positions (for the Foxglove exporter).
-        position_rows: list[dict] = []
+        position_rows: list[dict[str, Any]] = []
 
         for ts in timeline:
             broker.set_time(ts)  # stamp this bar's fills with its timestamp

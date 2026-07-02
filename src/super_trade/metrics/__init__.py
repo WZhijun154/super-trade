@@ -24,6 +24,10 @@ store, so backtests still read real data from a ``DataStore``.
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import polars as pl
 
 from .momentum import (
     cci,
@@ -54,7 +58,7 @@ from .volume import obv, typical_price, volume_sma, vwap
 
 # Registry of every metric, keyed by name. Struct-returning (multi-output)
 # metrics are marked so callers know to ``.unnest()`` the result.
-METRICS: dict[str, Callable] = {
+METRICS: dict[str, Callable[..., pl.Expr]] = {
     # returns (per-bar)
     "simple_return": simple_return,
     "log_return": log_return,
